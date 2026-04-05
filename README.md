@@ -2,7 +2,7 @@ because i couldn't be bothered to make 100 PRs
 
 # Install
 
-1. Install a userscript manager — [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/) are the ones that work reliably. [Greasemonkey](https://addons.mozilla.org/firefox/addon/greasemonkey/) (Firefox) usually **won’t** play nice: v4+ uses a different async storage API than this script expects.
+1. Install a userscript manager — [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/) usually works.
 2. [Download the script](https://github.com/inix1257/osu_expertplus/raw/refs/heads/main/dist/osu-expertplus.user.js) to install.
 
 # osu! Expert+
