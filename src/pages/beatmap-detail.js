@@ -26,6 +26,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
   const OMDB_BEATMAPSET_RATINGS_ID = IDS.OMDB_BEATMAPSET_RATINGS;
   const BEATMAP_PREVIEW_ID = IDS.BEATMAP_PREVIEW;
   const BEATCONNECT_DOWNLOAD_BUTTON_ID = IDS.BEATCONNECT_DOWNLOAD_BUTTON;
+  const API_EXTENDED_LEADERBOARD_ID = IDS.API_EXTENDED_LEADERBOARD;
   const beatmapPreview = OsuExpertPlus.beatmapPreview;
   const DISCUSSION_USER_CACHE = new Map();
 
@@ -151,9 +152,12 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       align-items: center;
       column-gap: 10px;
       row-gap: 6px;
+      padding-bottom: 12px;
+      margin-bottom: 0;
       position: sticky;
       top: 0;
       z-index: 1;
+      background-color: hsl(var(--hsl-b4));
       background-image: linear-gradient(
         to top,
         hsla(var(--hsl-b4), 0),
@@ -174,10 +178,19 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       flex: 0 0 auto;
       align-self: center;
       margin: 0;
+      font-size: 10px;
+      font-weight: 600;
+      line-height: 1.2;
+      padding: 3px 8px;
+      gap: 4px;
+      border-radius: 5px;
       color: hsl(var(--hsl-l1, 0 0% 90%));
       background: hsl(var(--hsl-b3, 333 18% 16%));
       border-color: hsl(var(--hsl-b5, 333 18% 28%));
       text-shadow: none;
+    }
+    .beatmapset-info > .beatmapset-info__box:first-child .beatmapset-info__row.${ROOT_CLASS}__description-heading-row .${ROOT_CLASS}__description-sticky-head > .${ROOT_CLASS}__action-btn--description-heading i {
+      font-size: 10px;
     }
     .beatmapset-info > .beatmapset-info__box:first-child .beatmapset-info__row.${ROOT_CLASS}__description-heading-row .${ROOT_CLASS}__description-sticky-head > .${ROOT_CLASS}__action-btn--description-heading:hover {
       background: hsl(var(--hsl-b4, 333 18% 22%));
@@ -761,6 +774,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       display: grid !important;
       gap: 8px 12px;
       align-items: start;
+      margin-bottom: 1.5rem;
     }
     .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] > .beatmap-scoreboard-mod[data-oep-mod-hidden] {
       display: none !important;
@@ -954,7 +968,6 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       border-radius: 6px;
     }
     .${ROOT_CLASS}__header-fav-chip:hover {
-      background: hsla(var(--hsl-b5, 333 18% 24%), 0.55);
       color: hsl(var(--hsl-c2, 333 60% 82%));
     }
     .${ROOT_CLASS}__header-fav-chip:hover .${ROOT_CLASS}__header-fav-name {
@@ -3645,8 +3658,6 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
     };
   }
 
-  const EXTENDED_LEADERBOARD_FEATURE_ID =
-    "beatmapDetail.apiExtendedLeaderboard";
   const EXTENDED_SCORE_ROW_ATTR = "data-oep-api-extended-score";
   const EXTENDED_LB_LIMIT = 100;
   const SCORES_LIMIT_PATCH_FLAG = "__oepBeatmapScoresLimitPatched";
@@ -3674,6 +3685,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
   function withBeatmapScoresLimit(rawUrl) {
     const src = String(rawUrl || "");
     if (!src) return src;
+    if (!settings.isEnabled(API_EXTENDED_LEADERBOARD_ID)) return src;
     try {
       const u = new URL(src, location.origin);
       if (!/^\/beatmaps\/\d+\/scores$/i.test(u.pathname)) return src;
@@ -5259,7 +5271,6 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
         {
           class: `${ROOT_CLASS}__header-fav-chip`,
           href: `https://osu.ppy.sh/users/${id}`,
-          title: name,
         },
         img,
         el("span", { class: `${ROOT_CLASS}__header-fav-name` }, name),
@@ -7401,20 +7412,20 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       const bgLink = el(
         "a",
         {
-          class: "btn-osu-big btn-osu-big--beatmapset-header",
+          class:
+            "btn-osu-big btn-osu-big--beatmapset-header-square",
           href: backgroundUrl,
           target: "_blank",
           rel: "noopener noreferrer",
           "data-oep-beatmapset-bg": "",
+          title: "Open background",
+          "aria-label": "Open background",
         },
         el(
           "span",
-          { class: "btn-osu-big__content" },
-          el(
-            "span",
-            { class: "btn-osu-big__left" },
-            el("span", { class: "btn-osu-big__text-top" }, "Open background"),
-          ),
+          {
+            class: "btn-osu-big__content btn-osu-big__content--center",
+          },
           el(
             "span",
             { class: "btn-osu-big__icon" },
@@ -7426,13 +7437,41 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
           ),
         ),
       );
+      const mp3DownloadUrl = `https://osu.ppyd.sh/beatmapsets/${encodeURIComponent(String(beatmapsetId))}/download`;
+      const mp3Link = el(
+        "a",
+        {
+          class: "btn-osu-big btn-osu-big--beatmapset-header-square",
+          href: mp3DownloadUrl,
+          target: "_blank",
+          rel: "noopener noreferrer",
+          "data-oep-beatmapset-mp3": "",
+          title: "Download MP3",
+          "aria-label": "Download MP3",
+        },
+        el(
+          "span",
+          { class: "btn-osu-big__content btn-osu-big__content--center" },
+          el(
+            "span",
+            { class: "btn-osu-big__icon" },
+            el(
+              "span",
+              { class: "fa fa-fw" },
+              el("span", { class: "fas fa-music", "aria-hidden": "true" }),
+            ),
+          ),
+        ),
+      );
       const directBtn = findBeatmapsetOsuDirectButton(headerButtons);
       if (directBtn) {
         directBtn.insertAdjacentElement("afterend", bgLink);
       } else {
         headerButtons.appendChild(bgLink);
       }
+      bgLink.insertAdjacentElement("afterend", mp3Link);
       bag.add(() => {
+        mp3Link.remove();
         bgLink.remove();
       });
     }

@@ -116,6 +116,14 @@ OsuExpertPlus.settings = (() => {
       group: "Beatmap Detail",
       default: true,
     },
+    {
+      id: "beatmapDetail.apiExtendedLeaderboard",
+      label: "Load up to 100 scores on beatmap leaderboard",
+      description:
+        "On beatmap scoreboards, bumps the `/beatmaps/{id}/scores` API limit from osu!’s default (50) to 100 so the first page loads more rows at once. Turn off to use the site default.",
+      group: "Beatmap Detail",
+      default: true,
+    },
   ];
 
   /** GM keys used by UI elsewhere (not listed in the options panel). */
@@ -224,6 +232,7 @@ OsuExpertPlus.settings = (() => {
     OMDB_BEATMAPSET_RATINGS: "beatmapDetail.omdbBeatmapsetRatings",
     BEATMAP_PREVIEW: "beatmapDetail.beatmapPreview",
     BEATCONNECT_DOWNLOAD_BUTTON: "beatmapDetail.beatconnectDownloadButton",
+    API_EXTENDED_LEADERBOARD: "beatmapDetail.apiExtendedLeaderboard",
   });
 
   return { IDS, getFeatures, isEnabled, set, onChange };
