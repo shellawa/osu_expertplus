@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         osu! Expert+
 // @namespace    https://github.com/inix1257/osu_expertplus
-// @version      0.2.1
+// @version      0.2.2
 // @description  Adds convenient extra features to osu.ppy.sh
 // @author       inix1257
 // @homepageURL  https://github.com/inix1257/osu_expertplus
@@ -671,7 +671,7 @@ OsuExpertPlus.settings = (() => {
   const FEATURES = [
     {
       id: "userProfile.alwaysShowStats",
-      label: "Always show play count & favourites",
+      label: "Play count & favourites on beatmap cards",
       description:
         "On user profiles and on /beatmapsets: keeps play count and favourite count visible on each beatmap card without hovering.",
       group: "Beatmap Card",
@@ -711,7 +711,7 @@ OsuExpertPlus.settings = (() => {
     },
     {
       id: "userProfile.moddedStarRating",
-      label: "Show modded star rating",
+      label: "Modded star rating on difficulties",
       description:
         "Fetches and displays the accurate star rating with mods applied next to each difficulty name. Requires API credentials.",
       group: "User Profile",
@@ -743,7 +743,7 @@ OsuExpertPlus.settings = (() => {
     },
     {
       id: "userProfile.scoreCardPlaceNumber",
-      label: "Show score place number",
+      label: "Score place number on rank cards",
       description:
         "Displays the position (#1, #2, …) before each score card's rank grade in the Ranks section.",
       group: "User Profile",
@@ -751,7 +751,7 @@ OsuExpertPlus.settings = (() => {
     },
     {
       id: "beatmapDetail.discussionDefaultToTotal",
-      label: "Discussion opens on Total tab",
+      label: "Beatmap discussion on Total tab",
       description:
         "On beatmap discussion pages, redirect default/praise landing routes to /discussion/-/generalAll/total.",
       group: "Beatmap Detail",
@@ -759,7 +759,7 @@ OsuExpertPlus.settings = (() => {
     },
     {
       id: "beatmapDetail.omdbBeatmapsetRatings",
-      label: "Show OMDB difficulty ratings",
+      label: "OMDB difficulty ratings on beatmapset pages",
       description:
         "On beatmapset pages, shows an OMDB link to this mapset above the difficulty name. Difficulty stats, distribution popover, and star voting (0 at the left edge of the first star, then 0.5–5) need an OMDB API key in Expert+ settings.",
       group: "Beatmap Detail",
@@ -775,11 +775,11 @@ OsuExpertPlus.settings = (() => {
     },
     {
       id: "beatmapDetail.beatconnectDownloadButton",
-      label: "Beatconnect download button",
+      label: "Beatconnect download on beatmapset pages",
       description:
         "On beatmapset pages, shows a Beatconnect.io download button beside the main .osz download link.",
       group: "Beatmap Detail",
-      default: false,
+      default: true,
     },
   ];
 
@@ -814,7 +814,9 @@ OsuExpertPlus.settings = (() => {
       GM_setValue(flag, true);
       return;
     }
-    const extra = FEATURES.find((f) => f.id === "userProfile.beatmapCardExtraInfo");
+    const extra = FEATURES.find(
+      (f) => f.id === "userProfile.beatmapCardExtraInfo",
+    );
     const extraDefault = extra ? extra.default : false;
     if (GM_getValue("userProfile.beatmapCardExtraInfo", extraDefault)) {
       GM_setValue(newKey, true);
@@ -840,7 +842,7 @@ OsuExpertPlus.settings = (() => {
     const feature = FEATURES.find((f) => f.id === id);
     const defaultVal = feature
       ? feature.default
-      : PANEL_HIDDEN_BOOLEAN_DEFAULTS[id] ?? false;
+      : (PANEL_HIDDEN_BOOLEAN_DEFAULTS[id] ?? false);
     return GM_getValue(id, defaultVal);
   }
 
@@ -6010,16 +6012,17 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       max-width: 88px;
       align-self: stretch;
       border-radius: 0 4px 4px 0;
-      border: 2px solid transparent;
-      border-left: 0;
+      border: none;
       padding: 4px 5px;
       text-decoration: none;
       cursor: pointer;
       text-transform: none;
       vertical-align: middle;
       color: hsl(var(--hsl-c1));
-      background: rgb(128, 123, 244);
-      transition: background-color 120ms ease, color 120ms ease;
+      background: hsl(var(--hsl-h2));
+      border-left: 1px solid hsl(var(--hsl-b5));
+      transition: background-color 120ms ease, color 120ms ease,
+        border-color 120ms ease;
     }
     .${BEATCONNECT_DL_BTN_CLASS} .${BEATCONNECT_STACK_CLASS} {
       display: flex;
@@ -6057,9 +6060,16 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       object-fit: contain;
     }
 
-    .${BEATCONNECT_DL_BTN_CLASS}:hover {
+    .${BEATCONNECT_DL_BTN_CLASS}:hover,
+    .${BEATCONNECT_DL_BTN_CLASS}:focus {
       color: hsl(var(--hsl-c1));
-      background: rgb(109, 104, 220);
+      background: hsl(var(--hsl-h1));
+      border-left-color: hsl(var(--hsl-b4));
+    }
+    .${BEATCONNECT_DL_BTN_CLASS}:active {
+      color: hsl(var(--hsl-c1));
+      background: hsl(var(--hsl-h1));
+      border-left-color: hsl(var(--hsl-b4));
     }
     .${BEATCONNECT_DL_BTN_CLASS}:focus-visible {
       outline: 2px solid hsl(var(--hsl-c2));
@@ -11928,11 +11938,25 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       const infoRoot = await waitForElement(".beatmapset-info", 12000);
       if (pathRe.test(location.pathname) && document.body.contains(header)) {
         // Between `.beatmapset-header` and `.beatmapset-info` (sibling in `.osu-page--generic-compact`).
-        if (
-          settings.isEnabled(BEATMAP_PREVIEW_ID) &&
-          beatmapPreview &&
-          !document.querySelector("[data-oep-beatmap-preview-root]")
-        ) {
+        /** @type {null|(() => void)} */
+        let beatmapPreviewCleanup = null;
+        function refreshBeatmapPreviewSection() {
+          try {
+            beatmapPreviewCleanup?.();
+          } catch (_) {}
+          beatmapPreviewCleanup = null;
+          if (
+            !pathRe.test(location.pathname) ||
+            !document.body.contains(header) ||
+            !settings.isEnabled(BEATMAP_PREVIEW_ID) ||
+            !beatmapPreview
+          ) {
+            return;
+          }
+          const infoEl = document.querySelector(".beatmapset-info");
+          if (!infoEl || !document.body.contains(infoEl)) return;
+          if (document.querySelector("[data-oep-beatmap-preview-root]")) return;
+
           const previewUi = beatmapPreview.mountBeatmapsetInfoPreview({
             el,
             manageStyle,
@@ -11946,12 +11970,24 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
             class: "oep-beatmap-preview-section",
           });
           previewSection.appendChild(previewUi.getRow());
-          infoRoot.insertAdjacentElement("beforebegin", previewSection);
-          bag.add(() => {
-            previewUi.dispose();
+          infoEl.insertAdjacentElement("beforebegin", previewSection);
+          beatmapPreviewCleanup = () => {
+            try {
+              previewUi.dispose();
+            } catch (_) {}
             previewSection.remove();
-          });
+          };
         }
+        refreshBeatmapPreviewSection();
+        bag.add(
+          settings.onChange(BEATMAP_PREVIEW_ID, refreshBeatmapPreviewSection),
+        );
+        bag.add(() => {
+          try {
+            beatmapPreviewCleanup?.();
+          } catch (_) {}
+          beatmapPreviewCleanup = null;
+        });
 
         const firstBox = infoRoot.querySelector(
           ":scope > .beatmapset-info__box",
@@ -18885,7 +18921,28 @@ OsuExpertPlus.settingsPanel = (() => {
       border-bottom: 1px solid hsl(var(--hsl-b3, 333 18% 16%));
       background: hsl(var(--hsl-b2, 333 18% 12%));
     }
-    .osu-expertplus-panel__section:last-child { border-bottom: none; }
+    .osu-expertplus-panel__section:last-of-type { border-bottom: none; }
+
+    .osu-expertplus-panel__footer {
+      padding: 10px 16px 12px;
+      border-top: 1px solid hsl(var(--hsl-b4, 333 18% 20%));
+      font-size: 11px;
+      line-height: 1.45;
+      color: hsl(var(--hsl-l2, 0 0% 72%));
+      text-align: center;
+    }
+    .osu-expertplus-panel__footer a {
+      color: hsl(var(--hsl-c2, 333 60% 70%));
+      text-decoration: underline;
+    }
+    .osu-expertplus-panel__footer a:hover {
+      color: hsl(var(--hsl-c2, 333 60% 82%));
+    }
+    .osu-expertplus-panel__footer-sep {
+      margin: 0 0.45em;
+      opacity: 0.45;
+      user-select: none;
+    }
 
     .osu-expertplus-panel__group-toggle {
       width: 100%;
@@ -19556,7 +19613,35 @@ OsuExpertPlus.settingsPanel = (() => {
       rows.push(buildSection(groupName, groupRows));
     }
 
-    return el("div", { id: ROOT_ID }, header, ...rows);
+    const footer = el(
+      "div",
+      { class: "osu-expertplus-panel__footer" },
+      el(
+        "a",
+        {
+          href: "https://github.com/inix1257/osu_expertplus",
+          target: "_blank",
+          rel: "noopener noreferrer",
+        },
+        "Source code",
+      ),
+      el(
+        "span",
+        { class: "osu-expertplus-panel__footer-sep", "aria-hidden": "true" },
+        "·",
+      ),
+      el(
+        "a",
+        {
+          href: "https://osu.ppy.sh/users/2688581",
+          target: "_blank",
+          rel: "noopener noreferrer",
+        },
+        "Developer",
+      ),
+    );
+
+    return el("div", { id: ROOT_ID }, header, ...rows, footer);
   }
 
   /** Assigned in {@link init}; no-op until then. */

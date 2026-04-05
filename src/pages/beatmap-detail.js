@@ -1354,16 +1354,17 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       max-width: 88px;
       align-self: stretch;
       border-radius: 0 4px 4px 0;
-      border: 2px solid transparent;
-      border-left: 0;
+      border: none;
       padding: 4px 5px;
       text-decoration: none;
       cursor: pointer;
       text-transform: none;
       vertical-align: middle;
       color: hsl(var(--hsl-c1));
-      background: rgb(128, 123, 244);
-      transition: background-color 120ms ease, color 120ms ease;
+      background: hsl(var(--hsl-h2));
+      border-left: 1px solid hsl(var(--hsl-b5));
+      transition: background-color 120ms ease, color 120ms ease,
+        border-color 120ms ease;
     }
     .${BEATCONNECT_DL_BTN_CLASS} .${BEATCONNECT_STACK_CLASS} {
       display: flex;
@@ -1401,9 +1402,16 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       object-fit: contain;
     }
 
-    .${BEATCONNECT_DL_BTN_CLASS}:hover {
+    .${BEATCONNECT_DL_BTN_CLASS}:hover,
+    .${BEATCONNECT_DL_BTN_CLASS}:focus {
       color: hsl(var(--hsl-c1));
-      background: rgb(109, 104, 220);
+      background: hsl(var(--hsl-h1));
+      border-left-color: hsl(var(--hsl-b4));
+    }
+    .${BEATCONNECT_DL_BTN_CLASS}:active {
+      color: hsl(var(--hsl-c1));
+      background: hsl(var(--hsl-h1));
+      border-left-color: hsl(var(--hsl-b4));
     }
     .${BEATCONNECT_DL_BTN_CLASS}:focus-visible {
       outline: 2px solid hsl(var(--hsl-c2));
@@ -7272,11 +7280,25 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       const infoRoot = await waitForElement(".beatmapset-info", 12000);
       if (pathRe.test(location.pathname) && document.body.contains(header)) {
         // Between `.beatmapset-header` and `.beatmapset-info` (sibling in `.osu-page--generic-compact`).
-        if (
-          settings.isEnabled(BEATMAP_PREVIEW_ID) &&
-          beatmapPreview &&
-          !document.querySelector("[data-oep-beatmap-preview-root]")
-        ) {
+        /** @type {null|(() => void)} */
+        let beatmapPreviewCleanup = null;
+        function refreshBeatmapPreviewSection() {
+          try {
+            beatmapPreviewCleanup?.();
+          } catch (_) {}
+          beatmapPreviewCleanup = null;
+          if (
+            !pathRe.test(location.pathname) ||
+            !document.body.contains(header) ||
+            !settings.isEnabled(BEATMAP_PREVIEW_ID) ||
+            !beatmapPreview
+          ) {
+            return;
+          }
+          const infoEl = document.querySelector(".beatmapset-info");
+          if (!infoEl || !document.body.contains(infoEl)) return;
+          if (document.querySelector("[data-oep-beatmap-preview-root]")) return;
+
           const previewUi = beatmapPreview.mountBeatmapsetInfoPreview({
             el,
             manageStyle,
@@ -7290,12 +7312,24 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
             class: "oep-beatmap-preview-section",
           });
           previewSection.appendChild(previewUi.getRow());
-          infoRoot.insertAdjacentElement("beforebegin", previewSection);
-          bag.add(() => {
-            previewUi.dispose();
+          infoEl.insertAdjacentElement("beforebegin", previewSection);
+          beatmapPreviewCleanup = () => {
+            try {
+              previewUi.dispose();
+            } catch (_) {}
             previewSection.remove();
-          });
+          };
         }
+        refreshBeatmapPreviewSection();
+        bag.add(
+          settings.onChange(BEATMAP_PREVIEW_ID, refreshBeatmapPreviewSection),
+        );
+        bag.add(() => {
+          try {
+            beatmapPreviewCleanup?.();
+          } catch (_) {}
+          beatmapPreviewCleanup = null;
+        });
 
         const firstBox = infoRoot.querySelector(
           ":scope > .beatmapset-info__box",

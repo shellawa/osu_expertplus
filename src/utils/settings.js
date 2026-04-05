@@ -6,7 +6,7 @@ OsuExpertPlus.settings = (() => {
   const FEATURES = [
     {
       id: "userProfile.alwaysShowStats",
-      label: "Always show play count & favourites",
+      label: "Play count & favourites on beatmap cards",
       description:
         "On user profiles and on /beatmapsets: keeps play count and favourite count visible on each beatmap card without hovering.",
       group: "Beatmap Card",
@@ -46,7 +46,7 @@ OsuExpertPlus.settings = (() => {
     },
     {
       id: "userProfile.moddedStarRating",
-      label: "Show modded star rating",
+      label: "Modded star rating on difficulties",
       description:
         "Fetches and displays the accurate star rating with mods applied next to each difficulty name. Requires API credentials.",
       group: "User Profile",
@@ -78,7 +78,7 @@ OsuExpertPlus.settings = (() => {
     },
     {
       id: "userProfile.scoreCardPlaceNumber",
-      label: "Show score place number",
+      label: "Score place number on rank cards",
       description:
         "Displays the position (#1, #2, …) before each score card's rank grade in the Ranks section.",
       group: "User Profile",
@@ -86,7 +86,7 @@ OsuExpertPlus.settings = (() => {
     },
     {
       id: "beatmapDetail.discussionDefaultToTotal",
-      label: "Discussion opens on Total tab",
+      label: "Beatmap discussion on Total tab",
       description:
         "On beatmap discussion pages, redirect default/praise landing routes to /discussion/-/generalAll/total.",
       group: "Beatmap Detail",
@@ -94,7 +94,7 @@ OsuExpertPlus.settings = (() => {
     },
     {
       id: "beatmapDetail.omdbBeatmapsetRatings",
-      label: "Show OMDB difficulty ratings",
+      label: "OMDB difficulty ratings on beatmapset pages",
       description:
         "On beatmapset pages, shows an OMDB link to this mapset above the difficulty name. Difficulty stats, distribution popover, and star voting (0 at the left edge of the first star, then 0.5–5) need an OMDB API key in Expert+ settings.",
       group: "Beatmap Detail",
@@ -110,11 +110,11 @@ OsuExpertPlus.settings = (() => {
     },
     {
       id: "beatmapDetail.beatconnectDownloadButton",
-      label: "Beatconnect download button",
+      label: "Beatconnect download on beatmapset pages",
       description:
         "On beatmapset pages, shows a Beatconnect.io download button beside the main .osz download link.",
       group: "Beatmap Detail",
-      default: false,
+      default: true,
     },
   ];
 
@@ -149,7 +149,9 @@ OsuExpertPlus.settings = (() => {
       GM_setValue(flag, true);
       return;
     }
-    const extra = FEATURES.find((f) => f.id === "userProfile.beatmapCardExtraInfo");
+    const extra = FEATURES.find(
+      (f) => f.id === "userProfile.beatmapCardExtraInfo",
+    );
     const extraDefault = extra ? extra.default : false;
     if (GM_getValue("userProfile.beatmapCardExtraInfo", extraDefault)) {
       GM_setValue(newKey, true);
@@ -175,7 +177,7 @@ OsuExpertPlus.settings = (() => {
     const feature = FEATURES.find((f) => f.id === id);
     const defaultVal = feature
       ? feature.default
-      : PANEL_HIDDEN_BOOLEAN_DEFAULTS[id] ?? false;
+      : (PANEL_HIDDEN_BOOLEAN_DEFAULTS[id] ?? false);
     return GM_getValue(id, defaultVal);
   }
 

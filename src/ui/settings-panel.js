@@ -246,7 +246,28 @@ OsuExpertPlus.settingsPanel = (() => {
       border-bottom: 1px solid hsl(var(--hsl-b3, 333 18% 16%));
       background: hsl(var(--hsl-b2, 333 18% 12%));
     }
-    .osu-expertplus-panel__section:last-child { border-bottom: none; }
+    .osu-expertplus-panel__section:last-of-type { border-bottom: none; }
+
+    .osu-expertplus-panel__footer {
+      padding: 10px 16px 12px;
+      border-top: 1px solid hsl(var(--hsl-b4, 333 18% 20%));
+      font-size: 11px;
+      line-height: 1.45;
+      color: hsl(var(--hsl-l2, 0 0% 72%));
+      text-align: center;
+    }
+    .osu-expertplus-panel__footer a {
+      color: hsl(var(--hsl-c2, 333 60% 70%));
+      text-decoration: underline;
+    }
+    .osu-expertplus-panel__footer a:hover {
+      color: hsl(var(--hsl-c2, 333 60% 82%));
+    }
+    .osu-expertplus-panel__footer-sep {
+      margin: 0 0.45em;
+      opacity: 0.45;
+      user-select: none;
+    }
 
     .osu-expertplus-panel__group-toggle {
       width: 100%;
@@ -917,7 +938,35 @@ OsuExpertPlus.settingsPanel = (() => {
       rows.push(buildSection(groupName, groupRows));
     }
 
-    return el("div", { id: ROOT_ID }, header, ...rows);
+    const footer = el(
+      "div",
+      { class: "osu-expertplus-panel__footer" },
+      el(
+        "a",
+        {
+          href: "https://github.com/inix1257/osu_expertplus",
+          target: "_blank",
+          rel: "noopener noreferrer",
+        },
+        "Source code",
+      ),
+      el(
+        "span",
+        { class: "osu-expertplus-panel__footer-sep", "aria-hidden": "true" },
+        "·",
+      ),
+      el(
+        "a",
+        {
+          href: "https://osu.ppy.sh/users/2688581",
+          target: "_blank",
+          rel: "noopener noreferrer",
+        },
+        "Developer",
+      ),
+    );
+
+    return el("div", { id: ROOT_ID }, header, ...rows, footer);
   }
 
   /** Assigned in {@link init}; no-op until then. */
