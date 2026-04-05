@@ -108,6 +108,14 @@ OsuExpertPlus.settings = (() => {
       group: "Beatmap Detail",
       default: true,
     },
+    {
+      id: "beatmapDetail.beatconnectDownloadButton",
+      label: "Beatconnect download button",
+      description:
+        "On beatmapset pages, shows a Beatconnect.io download button beside the main .osz download link.",
+      group: "Beatmap Detail",
+      default: false,
+    },
   ];
 
   /** GM keys used by UI elsewhere (not listed in the options panel). */
@@ -213,6 +221,7 @@ OsuExpertPlus.settings = (() => {
     DISCUSSION_DEFAULT_TO_TOTAL: "beatmapDetail.discussionDefaultToTotal",
     OMDB_BEATMAPSET_RATINGS: "beatmapDetail.omdbBeatmapsetRatings",
     BEATMAP_PREVIEW: "beatmapDetail.beatmapPreview",
+    BEATCONNECT_DOWNLOAD_BUTTON: "beatmapDetail.beatconnectDownloadButton",
   });
 
   return { IDS, getFeatures, isEnabled, set, onChange };

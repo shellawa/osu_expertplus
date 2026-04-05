@@ -773,6 +773,14 @@ OsuExpertPlus.settings = (() => {
       group: "Beatmap Detail",
       default: true,
     },
+    {
+      id: "beatmapDetail.beatconnectDownloadButton",
+      label: "Beatconnect download button",
+      description:
+        "On beatmapset pages, shows a Beatconnect.io download button beside the main .osz download link.",
+      group: "Beatmap Detail",
+      default: false,
+    },
   ];
 
   /** GM keys used by UI elsewhere (not listed in the options panel). */
@@ -878,6 +886,7 @@ OsuExpertPlus.settings = (() => {
     DISCUSSION_DEFAULT_TO_TOTAL: "beatmapDetail.discussionDefaultToTotal",
     OMDB_BEATMAPSET_RATINGS: "beatmapDetail.omdbBeatmapsetRatings",
     BEATMAP_PREVIEW: "beatmapDetail.beatmapPreview",
+    BEATCONNECT_DOWNLOAD_BUTTON: "beatmapDetail.beatconnectDownloadButton",
   });
 
   return { IDS, getFeatures, isEnabled, set, onChange };
@@ -4672,6 +4681,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
   const DISCUSSION_DEFAULT_TO_TOTAL_ID = IDS.DISCUSSION_DEFAULT_TO_TOTAL;
   const OMDB_BEATMAPSET_RATINGS_ID = IDS.OMDB_BEATMAPSET_RATINGS;
   const BEATMAP_PREVIEW_ID = IDS.BEATMAP_PREVIEW;
+  const BEATCONNECT_DOWNLOAD_BUTTON_ID = IDS.BEATCONNECT_DOWNLOAD_BUTTON;
   const beatmapPreview = OsuExpertPlus.beatmapPreview;
   const DISCUSSION_USER_CACHE = new Map();
 
@@ -11804,8 +11814,36 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
     bag.add(startBeatmapScoresDateHighlightManager(pathRe));
     bag.add(startBeatmapDiscussionPreviewManager(pathRe));
     bag.add(startDiscussionTabLinkPatcher(beatmapsetId));
-    bag.add(mountBeatconnectDownloadSplit(header, beatmapsetId));
     bag.add(startBeatmapsetFavouriteButtonPinkIndicator(header));
+
+    /** @type {null|(() => void)} */
+    let beatconnectCleanup = null;
+    function refreshBeatconnectDownloadButton() {
+      try {
+        beatconnectCleanup?.();
+      } catch (_) {}
+      beatconnectCleanup = null;
+      if (
+        pathRe.test(location.pathname) &&
+        document.body.contains(header) &&
+        settings.isEnabled(BEATCONNECT_DOWNLOAD_BUTTON_ID)
+      ) {
+        beatconnectCleanup = mountBeatconnectDownloadSplit(header, beatmapsetId);
+      }
+    }
+    refreshBeatconnectDownloadButton();
+    bag.add(
+      settings.onChange(
+        BEATCONNECT_DOWNLOAD_BUTTON_ID,
+        refreshBeatconnectDownloadButton,
+      ),
+    );
+    bag.add(() => {
+      try {
+        beatconnectCleanup?.();
+      } catch (_) {}
+      beatconnectCleanup = null;
+    });
 
     /** @type {null|(() => void)} */
     let omdbRatingsCleanup = null;

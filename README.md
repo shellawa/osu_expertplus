@@ -48,3 +48,4 @@ A userscript for [osu.ppy.sh](https://osu.ppy.sh). Some QoL changes are included
 
 - Discussion pages default to the Total tab (ranked mapsets usually send you to praise tab by default)
 - Markdown/preview support for modding thread
+- Show username and avatar on voters list
