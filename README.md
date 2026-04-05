@@ -1,15 +1,19 @@
+![](https://luscentos.s-ul.eu/Mfjdk1dV)
+# osu! ExpertPlus (for web)
+
 because i couldn't be bothered to make 200 PRs
 
-note: there might be potential behavior conflicts with other userscripts, so use at your own risk.
+note: there might be potential behavior conflicts with other userscripts, so use at your own risk
+
 
 # Install
 
-1. Install a userscript manager — [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/) usually works.
-2. [Download the script](https://github.com/inix1257/osu_expertplus/raw/refs/heads/main/dist/osu-expertplus.user.js) to install. If you have userscript manager installed, you can just click the link and install it.
+1. Install a userscript manager — [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/) usually works
+2. [Download the script](https://github.com/inix1257/osu_expertplus/raw/refs/heads/main/dist/osu-expertplus.user.js) to install. If you have userscript manager installed, you can just click the link and install it
 
 # osu! Expert+
 
-A userscript for [osu.ppy.sh](https://osu.ppy.sh). Some QoL changes are included.
+A userscript for [osu.ppy.sh](https://osu.ppy.sh). Some QoL changes are included
 
 ## Features
 
