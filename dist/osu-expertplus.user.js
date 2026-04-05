@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         osu! Expert+
 // @namespace    https://github.com/inix1257/osu_expertplus
-// @version      0.1.0
+// @version      0.2.0
 // @description  Adds convenient extra features to osu.ppy.sh
 // @author       inix1257
 // @homepageURL  https://github.com/inix1257/osu_expertplus
@@ -737,7 +737,7 @@ OsuExpertPlus.settings = (() => {
       id: "userProfile.scoreCardBackgrounds",
       label: "Beatmap background on score cards",
       description:
-        "Shows the beatmap cover art as a background image on each score card in the Ranks section.",
+        "Shows the beatmap cover art as a background image on each score card in the Ranks section and on Expert+ Recent scores (Historical tab).",
       group: "User Profile",
       default: true,
     },
@@ -746,6 +746,14 @@ OsuExpertPlus.settings = (() => {
       label: "Show score place number",
       description:
         "Displays the position (#1, #2, …) before each score card's rank grade in the Ranks section.",
+      group: "User Profile",
+      default: true,
+    },
+    {
+      id: "userProfile.recentScoresShowFails",
+      label: "Recent scores: show failed scores",
+      description:
+        "On the profile Historical tab, the Expert+ “Recent scores” list can include failed plays. Turn off to show only passing scores. The “Show failed scores” control there uses the same setting.",
       group: "User Profile",
       default: true,
     },
@@ -867,6 +875,7 @@ OsuExpertPlus.settings = (() => {
     HIDE_CL_MOD: "userProfile.hideClMod",
     SCORE_CARD_BACKGROUNDS: "userProfile.scoreCardBackgrounds",
     SCORE_CARD_PLACE_NUMBER: "userProfile.scoreCardPlaceNumber",
+    RECENT_SCORES_SHOW_FAILS: "userProfile.recentScoresShowFails",
     DISCUSSION_DEFAULT_TO_TOTAL: "beatmapDetail.discussionDefaultToTotal",
     OMDB_BEATMAPSET_RATINGS: "beatmapDetail.omdbBeatmapsetRatings",
     BEATMAP_PREVIEW: "beatmapDetail.beatmapPreview",
@@ -877,7 +886,7 @@ OsuExpertPlus.settings = (() => {
 
 /* ── src/utils/beatmap-preview.js ── */
 /** Lazy ESM load osu-beatmap-renderer + Pixi; gameplay preview on beatmapset pages. */
-/* global unsafeWindow, GM_getValue, GM_setValue, GM_xmlhttpRequest */
+/* global unsafeWindow, GM_getValue, GM_xmlhttpRequest */
 
 window.OsuExpertPlus = window.OsuExpertPlus || {};
 
@@ -890,7 +899,7 @@ OsuExpertPlus.beatmapPreview = (() => {
   const PIXI_ESM_URL =
     "https://cdn.jsdelivr.net/npm/pixi.js@8.6.6/dist/pixi.min.mjs";
   const RENDERER_ESM_URL =
-    "https://cdn.jsdelivr.net/npm/osu-beatmap-renderer@0.1.1/dist/osu-beatmap-renderer.js";
+    "https://cdn.jsdelivr.net/npm/osu-beatmap-renderer@0.1.2/dist/osu-beatmap-renderer.js";
 
   /** Page window (unsafeWindow under TM). */
   function pageWindow() {
@@ -902,6 +911,36 @@ OsuExpertPlus.beatmapPreview = (() => {
       void 0;
     }
     return window;
+  }
+
+  /** Page-origin `localStorage` (osu.ppy.sh), or null if unavailable. */
+  function pageLocalStorage() {
+    try {
+      const pw = pageWindow();
+      return pw?.localStorage ?? null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * Reads osu! web `localStorage.userPreferences` JSON and returns `audio_volume` if valid (0–1).
+   * @returns {number|null}
+   */
+  function readOsuSiteAudioVolume() {
+    const ls = pageLocalStorage();
+    if (!ls) return null;
+    try {
+      const raw = ls.getItem("userPreferences");
+      if (raw == null || raw === "") return null;
+      const obj = JSON.parse(raw);
+      const v = obj?.audio_volume;
+      const n = Number(v);
+      if (Number.isFinite(n) && n >= 0 && n <= 1) return n;
+    } catch (_) {
+      void 0;
+    }
+    return null;
   }
 
   /** @type {Promise<any>|null} */
@@ -1435,7 +1474,9 @@ window.dispatchEvent(new Event(${JSON.stringify(READY_EVENT)}));
     styleId,
   }) {
     const wrapClass = "oep-beatmap-preview";
-    const styles = manageStyle(styleId, `
+    const styles = manageStyle(
+      styleId,
+      `
       .${wrapClass} { margin-top: 4px; }
       .${wrapClass}__toggle.btn-osu-big {
         --btn-bg: hsl(var(--hsl-b5, 333 18% 28%));
@@ -1593,7 +1634,8 @@ window.dispatchEvent(new Event(${JSON.stringify(READY_EVENT)}));
         padding-bottom: 0;
         min-width: 0;
       }
-    `);
+    `,
+    );
     styles.inject();
 
     const row = el("div", {
@@ -1614,42 +1656,88 @@ window.dispatchEvent(new Event(${JSON.stringify(READY_EVENT)}));
 
     /** Site preview files are short; cap so we never treat a longer buffer as full-map audio. */
     const PREVIEW_CLIP_MAX_MS = 10000;
-    const PREVIEW_MUSIC_VOLUME_GM_KEY = "beatmapPreview.musicVolume";
-    const PREVIEW_HITSVOL_GM_KEY = "beatmapPreview.hitsoundVolume";
+    const PREVIEW_MUSIC_LS_KEY = "oep.beatmapPreview.musicVolume";
+    const PREVIEW_HITSOUND_LS_KEY = "oep.beatmapPreview.hitsoundVolume";
+    /** Tampermonkey keys from before localStorage migration; read once to seed LS. */
+    const PREVIEW_MUSIC_VOLUME_LEGACY_GM_KEY = "beatmapPreview.musicVolume";
+    const PREVIEW_HITSVOL_LEGACY_GM_KEY = "beatmapPreview.hitsoundVolume";
+    const PREVIEW_VOLUME_DEFAULT = 0.3;
 
     function readStoredMusicVolume() {
+      const ls = pageLocalStorage();
+      if (ls) {
+        try {
+          const s = ls.getItem(PREVIEW_MUSIC_LS_KEY);
+          if (s != null && s !== "") {
+            const n = Number(s);
+            if (Number.isFinite(n) && n >= 0 && n <= 1) return n;
+          }
+        } catch (_) {
+          void 0;
+        }
+      }
       try {
-        const v = GM_getValue(PREVIEW_MUSIC_VOLUME_GM_KEY, 0.3);
-        const n = Number(v);
-        if (Number.isFinite(n) && n >= 0 && n <= 1) return n;
+        const v = GM_getValue(PREVIEW_MUSIC_VOLUME_LEGACY_GM_KEY, undefined);
+        if (v !== undefined && v !== null && String(v) !== "") {
+          const n = Number(v);
+          if (Number.isFinite(n) && n >= 0 && n <= 1) {
+            writeStoredMusicVolume(n);
+            return n;
+          }
+        }
       } catch (_) {
         void 0;
       }
-      return 0.3;
+      const site = readOsuSiteAudioVolume();
+      if (site != null) return site;
+      return PREVIEW_VOLUME_DEFAULT;
     }
 
     function writeStoredMusicVolume(vol) {
+      const ls = pageLocalStorage();
+      if (!ls) return;
       try {
-        GM_setValue(PREVIEW_MUSIC_VOLUME_GM_KEY, vol);
+        ls.setItem(PREVIEW_MUSIC_LS_KEY, String(vol));
       } catch (_) {
         void 0;
       }
     }
 
     function readStoredHitsoundVolume() {
+      const ls = pageLocalStorage();
+      if (ls) {
+        try {
+          const s = ls.getItem(PREVIEW_HITSOUND_LS_KEY);
+          if (s != null && s !== "") {
+            const n = Number(s);
+            if (Number.isFinite(n) && n >= 0 && n <= 1) return n;
+          }
+        } catch (_) {
+          void 0;
+        }
+      }
       try {
-        const v = GM_getValue(PREVIEW_HITSVOL_GM_KEY, 0.3);
-        const n = Number(v);
-        if (Number.isFinite(n) && n >= 0 && n <= 1) return n;
+        const v = GM_getValue(PREVIEW_HITSVOL_LEGACY_GM_KEY, undefined);
+        if (v !== undefined && v !== null && String(v) !== "") {
+          const n = Number(v);
+          if (Number.isFinite(n) && n >= 0 && n <= 1) {
+            writeStoredHitsoundVolume(n);
+            return n;
+          }
+        }
       } catch (_) {
         void 0;
       }
-      return 0.3;
+      const site = readOsuSiteAudioVolume();
+      if (site != null) return site;
+      return PREVIEW_VOLUME_DEFAULT;
     }
 
     function writeStoredHitsoundVolume(vol) {
+      const ls = pageLocalStorage();
+      if (!ls) return;
       try {
-        GM_setValue(PREVIEW_HITSVOL_GM_KEY, vol);
+        ls.setItem(PREVIEW_HITSOUND_LS_KEY, String(vol));
       } catch (_) {
         void 0;
       }
@@ -1707,9 +1795,13 @@ window.dispatchEvent(new Event(${JSON.stringify(READY_EVENT)}));
       clearTransportFlashTimer();
       transportPlayGlyph.hidden = isPlaying;
       transportPauseGlyph.hidden = !isPlaying;
-      transportOverlay.classList.add(`${wrapClass}__transport-overlay--visible`);
+      transportOverlay.classList.add(
+        `${wrapClass}__transport-overlay--visible`,
+      );
       transportFlashTimer = window.setTimeout(() => {
-        transportOverlay.classList.remove(`${wrapClass}__transport-overlay--visible`);
+        transportOverlay.classList.remove(
+          `${wrapClass}__transport-overlay--visible`,
+        );
         transportFlashTimer = 0;
       }, TRANSPORT_FLASH_HOLD_MS);
     }
@@ -1869,7 +1961,10 @@ window.dispatchEvent(new Event(${JSON.stringify(READY_EVENT)}));
      * @param {number} beatmapMs
      */
     function beatmapTimeOverlapsPreviewClip(eng, beatmapMs) {
-      if (!eng?.getPreviewAudioTimeMsForBeatmapTime || !Number.isFinite(beatmapMs)) {
+      if (
+        !eng?.getPreviewAudioTimeMsForBeatmapTime ||
+        !Number.isFinite(beatmapMs)
+      ) {
         return false;
       }
       const shifted = eng.getPreviewAudioTimeMsForBeatmapTime(beatmapMs);
@@ -1989,6 +2084,69 @@ window.dispatchEvent(new Event(${JSON.stringify(READY_EVENT)}));
         syncPreviewMusicToWindow(sharedEngine);
       } catch (_) {
         void 0;
+      }
+    }
+
+    /** @param {number} deltaMs */
+    function seekByDeltaMs(deltaMs) {
+      if (!sharedEngine || seekRange.disabled || !lastLoadedKey) return;
+      let t = 0;
+      let duration = 0;
+      try {
+        t = sharedEngine.getCurrentTime?.() ?? 0;
+        duration = sharedEngine.getDuration?.() ?? 0;
+      } catch (_) {
+        return;
+      }
+      const maxMs = Math.max(0, Number.isFinite(duration) ? duration : 0);
+      if (maxMs <= 0) return;
+      const next = Math.min(
+        maxMs,
+        Math.max(0, (Number.isFinite(t) ? t : 0) + deltaMs),
+      );
+      try {
+        sharedEngine.setCurrentTime?.(next);
+        syncPreviewMusicToWindow(sharedEngine);
+        syncSeekUiFromEngine();
+      } catch (_) {
+        void 0;
+      }
+    }
+
+    /**
+     * Space: play/pause. ArrowLeft/ArrowRight: ±1s seek.
+     * Volume sliders keep native arrow behavior; Jump to preview keeps Space on the button.
+     * @param {KeyboardEvent} ev
+     */
+    function onPreviewPanelKeydown(ev) {
+      if (
+        !expanded ||
+        panel.hidden ||
+        !lastLoadedKey ||
+        seekRange.disabled ||
+        busy
+      ) {
+        return;
+      }
+      const t = ev.target;
+      if (!(t instanceof Node) || !panel.contains(t)) return;
+      if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+
+      const key = ev.key;
+      const isArrow = key === "ArrowLeft" || key === "ArrowRight";
+      const isPlayKey = key === " " || key === "Enter" || key === "Spacebar";
+
+      if (isArrow) {
+        if (t === musicVolumeRange || t === hitsoundVolumeRange) return;
+        ev.preventDefault();
+        seekByDeltaMs(key === "ArrowLeft" ? -1000 : 1000);
+        return;
+      }
+
+      if (isPlayKey) {
+        if (t instanceof HTMLButtonElement && t !== canvasHost) return;
+        ev.preventDefault();
+        togglePlaybackFromCanvas();
       }
     }
 
@@ -2186,7 +2344,9 @@ window.dispatchEvent(new Event(${JSON.stringify(READY_EVENT)}));
         const eng = await ensureEngine();
         eng.pause();
         const bgAbs = absoluteUrl(bg);
-        const bgObjectUrl = bgAbs ? await fetchBeatmapCoverObjectUrl(bgAbs) : "";
+        const bgObjectUrl = bgAbs
+          ? await fetchBeatmapCoverObjectUrl(bgAbs)
+          : "";
         await eng.loadBeatmap({
           osuText,
           audioUrl: previewAudio || undefined,
@@ -2266,11 +2426,7 @@ window.dispatchEvent(new Event(${JSON.stringify(READY_EVENT)}));
       if ((ev.detail & 1) !== 1) return;
       togglePlaybackFromCanvas();
     });
-    canvasHost.addEventListener("keydown", (ev) => {
-      if (ev.key !== "Enter" && ev.key !== " ") return;
-      ev.preventDefault();
-      togglePlaybackFromCanvas();
-    });
+    panel.addEventListener("keydown", onPreviewPanelKeydown);
 
     toggleBtn.addEventListener("click", async () => {
       expanded = !expanded;
@@ -2278,9 +2434,7 @@ window.dispatchEvent(new Event(${JSON.stringify(READY_EVENT)}));
       panel.hidden = !expanded;
       const top = toggleBtn.querySelector(".btn-osu-big__text-top");
       if (top) {
-        top.textContent = expanded
-          ? "Hide beatmap preview"
-          : "Beatmap Preview";
+        top.textContent = expanded ? "Hide beatmap preview" : "Beatmap Preview";
       }
       if (expanded) {
         startSeekAnimationLoop();
@@ -2310,9 +2464,12 @@ window.dispatchEvent(new Event(${JSON.stringify(READY_EVENT)}));
     return {
       dispose: () => {
         window.removeEventListener("hashchange", onHashChange);
+        panel.removeEventListener("keydown", onPreviewPanelKeydown);
         stopSeekAnimationLoop();
         clearTransportFlashTimer();
-        transportOverlay.classList.remove(`${wrapClass}__transport-overlay--visible`);
+        transportOverlay.classList.remove(
+          `${wrapClass}__transport-overlay--visible`,
+        );
         revokeBeatmapCoverObjectUrl();
         parkSharedEngineRoot();
         row.remove();
@@ -2655,6 +2812,10 @@ OsuExpertPlus.beatmapCardExtra = (() => {
   /**
    * Initial listing data: `<script id="json-beatmaps" type="application/json">`.
    * Re-parses when the script body changes (Turbo / in-place updates); avoid a one-shot flag.
+   *
+   * SPA navigations often fill this tag by updating the script’s text node. The document-level
+   * `MutationObserver` in `start()` only uses `childList`/`subtree`, so those text updates do not
+   * run `ingestFromJsonBeatmapsScript` unless we observe this node with `characterData: true`.
    */
   function ingestFromJsonBeatmapsScript() {
     const n = document.getElementById("json-beatmaps");
@@ -2781,6 +2942,12 @@ OsuExpertPlus.beatmapCardExtra = (() => {
 
   /** One-shot same-origin prefetch if hooks missed the site’s first request (script load timing). */
   let profileExtraPrefetchStarted = false;
+
+  /**
+   * On SPA navigation to /beatmapsets, osu-web fires the initial search fetch before `pushState`,
+   * so our hook is never installed in time to intercept it. Guard against double-fetching.
+   */
+  let listingSearchPrefetchStarted = false;
 
   /** ms to wait for site JSON/fetch to populate `cache` after panels appear. */
   const PROFILE_EXTRA_CACHE_WAIT_MS = 2000;
@@ -2928,10 +3095,7 @@ OsuExpertPlus.beatmapCardExtra = (() => {
         const hiStr = formatStarShort(hi);
         if (!loStr || !hiStr) return;
 
-        const wrap = el("span", {
-          class: STAR_RANGE_CLASS,
-          title: "Star rating range (nomod)",
-        });
+        const wrap = el("span", { class: STAR_RANGE_CLASS });
 
         if (lo === hi || loStr === hiStr) {
           const chip = buildStarChip(dc, lo);
@@ -3330,6 +3494,45 @@ OsuExpertPlus.beatmapCardExtra = (() => {
   }
 
   /**
+   * On SPA navigation to /beatmapsets, osu-web issues the initial search fetch as part of its own
+   * routing — before calling pushState, and therefore before our hook is installed. Re-fetch the
+   * first page ourselves so the cache is populated for already-visible panels.
+   * @param {() => boolean} wantIngest
+   * @param {typeof window.fetch | null} nativeFetch
+   */
+  function startListingSearchPrefetchIfNeeded(wantIngest, nativeFetch) {
+    if (!wantIngest()) return;
+    if (!/^\/beatmapsets(?:\/?)(?!\d)/i.test(location.pathname)) return;
+    if (listingSearchPrefetchStarted) return;
+    // If #json-beatmaps has content the page was SSR-rendered; first-page data is already ingested.
+    const n = document.getElementById("json-beatmaps");
+    if (n?.textContent?.trim()) return;
+    const pw = pageWin();
+    const doFetch =
+      nativeFetch ||
+      (typeof pw.fetch === "function" ? pw.fetch.bind(pw) : null);
+    if (!doFetch) return;
+    listingSearchPrefetchStarted = true;
+    const params = new URLSearchParams(location.search);
+    params.delete("cursor_string");
+    const qs = params.toString();
+    const url = `/beatmapsets/search${qs ? "?" + qs : ""}`;
+    void (async () => {
+      try {
+        const r = await doFetch(url, {
+          credentials: "include",
+          headers: { Accept: "application/json" },
+        });
+        if (!wantIngest()) return;
+        if (!r.ok) return;
+        ingestBeatmapsetsSearchPayload(await r.json());
+      } catch (_) {
+        void 0;
+      }
+    })();
+  }
+
+  /**
    * @param {typeof OsuExpertPlus.settings} settings
    * @param {{ hookProfileExtraPages?: boolean }} [options]
    * @returns {() => void}
@@ -3346,9 +3549,57 @@ OsuExpertPlus.beatmapCardExtra = (() => {
     const MO_MAX_WAIT_MS = 450;
     let ingestPanelsId = 0;
 
+    /** @type {MutationObserver|null} */
+    let jsonBeatmapsMo = null;
+    /** @type {Element|null} */
+    let jsonBeatmapsObserved = null;
+    let jsonBeatmapsTextMutDeb = 0;
+
+    function disconnectJsonBeatmapsObserver() {
+      window.clearTimeout(jsonBeatmapsTextMutDeb);
+      jsonBeatmapsTextMutDeb = 0;
+      try {
+        jsonBeatmapsMo?.disconnect();
+      } catch (_) {
+        void 0;
+      }
+      jsonBeatmapsMo = null;
+      jsonBeatmapsObserved = null;
+    }
+
+    function connectJsonBeatmapsObserver() {
+      if (!wantIngest()) {
+        disconnectJsonBeatmapsObserver();
+        return;
+      }
+      const n = document.getElementById("json-beatmaps");
+      if (!n) {
+        disconnectJsonBeatmapsObserver();
+        return;
+      }
+      if (jsonBeatmapsObserved === n && jsonBeatmapsMo) return;
+      disconnectJsonBeatmapsObserver();
+      jsonBeatmapsObserved = n;
+      jsonBeatmapsMo = new MutationObserver(() => {
+        if (!wantIngest()) return;
+        window.clearTimeout(jsonBeatmapsTextMutDeb);
+        jsonBeatmapsTextMutDeb = window.setTimeout(() => {
+          jsonBeatmapsTextMutDeb = 0;
+          ingestFromJsonBeatmapsScript();
+          scheduleAfterIngest();
+        }, 0);
+      });
+      jsonBeatmapsMo.observe(n, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+    }
+
     profileExtraState.waitForExtraPages =
       options.hookProfileExtraPages === true;
     profileExtraPrefetchStarted = false;
+    listingSearchPrefetchStarted = false;
 
     /** @type {typeof window.fetch | null} */
     let origFetch = null;
@@ -3405,7 +3656,11 @@ OsuExpertPlus.beatmapCardExtra = (() => {
       if (on) {
         ingestFromJsonBeatmapsScript();
         startProfileExtraPagesPrefetchIfNeeded(wantIngest, origFetch);
+        startListingSearchPrefetchIfNeeded(wantIngest, origFetch);
+        connectJsonBeatmapsObserver();
         scheduleAllPanels(document, settings);
+      } else {
+        disconnectJsonBeatmapsObserver();
       }
       syncPopupHighlightHeight();
     };
@@ -3436,6 +3691,7 @@ OsuExpertPlus.beatmapCardExtra = (() => {
       if (!wantIngest()) {
         return;
       }
+      connectJsonBeatmapsObserver();
       ingestFromJsonBeatmapsScript();
       scheduleAllPanels(document, settings);
       syncPopupHighlightHeight();
@@ -3505,11 +3761,13 @@ OsuExpertPlus.beatmapCardExtra = (() => {
       window.clearTimeout(moDebounceId);
       window.clearTimeout(moMaxWaitId);
       window.clearTimeout(ingestPanelsId);
+      disconnectJsonBeatmapsObserver();
       unsubMeta();
       unsubStars();
       mo.disconnect();
       profileExtraState.waitForExtraPages = false;
       profileExtraPrefetchStarted = false;
+      listingSearchPrefetchStarted = false;
       scheduleAfterIngest = () => {};
       uninstallXhrHook();
       if (origFetch) pageContext.fetch = origFetch;
@@ -4319,6 +4577,61 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       border-bottom: 1px solid hsl(var(--hsl-b4, 333 18% 20%));
       flex-shrink: 0;
     }
+    .${ROOT_CLASS}__modal-header-start {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .${ROOT_CLASS}__modal-header-osu-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      flex-shrink: 0;
+      max-width: min(100%, 240px);
+    }
+    .${ROOT_CLASS}__modal-header-osu-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 30px;
+      padding: 5px 10px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+      color: hsl(var(--hsl-l2, 0 0% 72%));
+      background: hsl(var(--hsl-b4, 333 18% 18%));
+      transition: background 120ms ease, color 120ms ease, opacity 120ms ease;
+    }
+    .${ROOT_CLASS}__modal-header-osu-msg {
+      margin: 0;
+      font-size: 10px;
+      font-weight: 500;
+      line-height: 1.3;
+      color: #e07a7a;
+    }
+    .${ROOT_CLASS}__modal-header-osu-msg:empty {
+      display: none;
+    }
+    .${ROOT_CLASS}__modal-header-osu-btn:hover:not(:disabled) {
+      background: hsl(var(--hsl-b5, 333 18% 26%));
+      color: hsl(var(--hsl-l1, 0 0% 92%));
+    }
+    .${ROOT_CLASS}__modal-header-osu-btn:focus-visible {
+      outline: 2px solid hsl(var(--hsl-c2, 333 60% 70%));
+      outline-offset: 2px;
+    }
+    .${ROOT_CLASS}__modal-header-osu-btn:disabled {
+      opacity: 0.55;
+      cursor: wait;
+    }
     .${ROOT_CLASS}__modal-title {
       margin: 0;
       font-size: 13px;
@@ -4994,7 +5307,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       font-weight: 500;
       letter-spacing: 0.02em;
       text-transform: none;
-      opacity: 0.52;
+      opacity: 1;
       color: hsl(var(--hsl-l1, 0 0% 72%));
     }
     .${OEP_OMDB_ROW_CLASS}__rank-value {
@@ -5129,7 +5442,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       font-weight: 700;
       letter-spacing: 0.08em;
       text-transform: uppercase;
-      opacity: 0.55;
+      opacity: 1;
       line-height: 1;
       display: inline-flex;
       align-items: center;
@@ -9797,6 +10110,77 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
   }
 
   /**
+   * Modal header control: GET `https://osu.ppy.sh/osu/{beatmapId}` for the selected difficulty and show the file in a new tab.
+   * @param {typeof el} elFn
+   * @param {() => string|null} getBeatmapId
+   */
+  function buildBeatmapMetadataOsuOpenButton(elFn, getBeatmapId) {
+    const wrap = elFn("div", { class: `${ROOT_CLASS}__modal-header-osu-wrap` });
+    const btn = elFn("button", {
+      type: "button",
+      class: `${ROOT_CLASS}__modal-header-osu-btn`,
+      "aria-label": "Open .osu file for current difficulty",
+    });
+    btn.appendChild(
+      elFn("i", { class: "fas fa-file-code", "aria-hidden": "true" }),
+    );
+    btn.appendChild(document.createTextNode("open .osu"));
+    const msgEl = elFn("p", {
+      class: `${ROOT_CLASS}__modal-header-osu-msg`,
+      "aria-live": "polite",
+    });
+    wrap.appendChild(btn);
+    wrap.appendChild(msgEl);
+
+    let msgResetTimer = 0;
+    /**
+     * @param {string} msg
+     */
+    function flashMsg(msg) {
+      msgEl.textContent = msg;
+      if (msgResetTimer) window.clearTimeout(msgResetTimer);
+      msgResetTimer = window.setTimeout(() => {
+        msgEl.textContent = "";
+        msgResetTimer = 0;
+      }, 3200);
+    }
+    btn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = getBeatmapId();
+      if (!id) {
+        flashMsg("Could not detect a beatmap id for this page.");
+        return;
+      }
+      if (btn.disabled) return;
+      btn.disabled = true;
+      try {
+        const url = `https://osu.ppy.sh/osu/${encodeURIComponent(id)}`;
+        const resp = await fetch(url, { credentials: "include" });
+        if (!resp.ok) {
+          flashMsg(`Could not load .osu (HTTP ${resp.status}).`);
+          return;
+        }
+        const text = await resp.text();
+        const blob = new Blob([text], {
+          type: "text/plain;charset=utf-8",
+        });
+        const objectUrl = URL.createObjectURL(blob);
+        const opened = window.open(objectUrl, "_blank", "noopener,noreferrer");
+        if (!opened) {
+          flashMsg("Popup blocked — allow popups for osu.ppy.sh to view .osu.");
+        }
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 120000);
+      } catch (_) {
+        flashMsg("Could not load .osu (network error).");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    return wrap;
+  }
+
+  /**
    * @param {typeof el} elFn
    * @param {string} rootClass
    * @param {object} cfg
@@ -9808,6 +10192,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
    * @param {boolean} [cfg.primary]
    * @param {string} [cfg.modalExtraClass]
    * @param {string} [cfg.buttonExtraClass] Extra classes on the open button (e.g. compact placement)
+   * @param {(elFn: typeof el) => Node|null|undefined} [cfg.buildModalTitleExtra] Shown after the modal title (left header group)
    * @param {() => Node} cfg.buildBody
    */
   function attachBeatmapsetInfoModal(elFn, rootClass, cfg) {
@@ -9819,6 +10204,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       primary = false,
       modalExtraClass = "",
       buildBody,
+      buildModalTitleExtra,
       mountButton,
       buttonExtraClass = "",
     } = cfg;
@@ -9854,9 +10240,17 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
     });
     modal.style.background = resolveDescriptionSectionBackgroundColor();
     const modalHeader = elFn("div", { class: `${rootClass}__modal-header` });
-    modalHeader.appendChild(
+    const headerStart = elFn("div", {
+      class: `${rootClass}__modal-header-start`,
+    });
+    headerStart.appendChild(
       elFn("h2", { class: `${rootClass}__modal-title`, id: titleId }, title),
     );
+    if (typeof buildModalTitleExtra === "function") {
+      const extra = buildModalTitleExtra(elFn);
+      if (extra) headerStart.appendChild(extra);
+    }
+    modalHeader.appendChild(headerStart);
     const closeBtn = elFn(
       "button",
       {
@@ -11031,6 +11425,8 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
           btn.setAttribute("data-oep-beatmapset-metadata", "");
           artistEl.insertAdjacentElement("afterend", btn);
         },
+        buildModalTitleExtra: (elFn) =>
+          buildBeatmapMetadataOsuOpenButton(elFn, getBeatmapPageBeatmapId),
         buildBody: () => buildModalBody(data, el),
       });
     }
@@ -11201,6 +11597,7 @@ OsuExpertPlus.pages.userProfile = (() => {
 
   // Score lists: PP from span title → 2dp; hit-stat row from API (fetchScores)
   const SCORE_LIST_DETAILS_ID = IDS.SCORE_LIST_DETAILS;
+  const RECENT_SCORES_SHOW_FAILS_ID = IDS.RECENT_SCORES_SHOW_FAILS;
   const PP_DECIMALS_ATTR = "data-oep-pp-original";
 
   function applyPpDecimals(listEl) {
@@ -11611,6 +12008,46 @@ OsuExpertPlus.pages.userProfile = (() => {
       flex-shrink: 0;
       display: inline-flex;
       align-items: center;
+    }
+
+    .oep-recent-fails-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem 0.75rem;
+    }
+    .oep-recent-fails-header .title {
+      margin: 0;
+      padding: 0;
+      line-height: 1.2;
+    }
+    .oep-recent-fails-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5em;
+      margin: 0;
+      padding: 0;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      line-height: 1;
+      letter-spacing: 0.02em;
+      color: hsl(var(--hsl-c1));
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    .oep-recent-fails-toggle .oep-recent-show-fails {
+      margin: 0;
+      width: 14px;
+      height: 14px;
+      flex: 0 0 14px;
+      border-radius: 3px;
+      cursor: pointer;
+      accent-color: hsl(var(--hsl-b6));
+    }
+    .oep-recent-fails-toggle .oep-recent-show-fails:focus-visible {
+      outline: 2px solid hsl(var(--hsl-b6));
+      outline-offset: 2px;
     }
   `;
   const playDetailStyle = manageStyle(PLAY_DETAIL_STYLE_ID, PLAY_DETAIL_CSS);
@@ -12423,6 +12860,21 @@ OsuExpertPlus.pages.userProfile = (() => {
   }
 
   const RECENT_FAILS_WRAP_CLASS = "oep-recent-scores-with-fails";
+  const RECENT_FAILS_EMPTY_MSG = "No scores found.";
+  const RECENT_FAILS_EMPTY_FILTERED_MSG =
+    "No passing scores in this list (fails hidden).";
+
+  /** @type {WeakMap<HTMLElement, Object[]>} */
+  const recentScoresFullCache = new WeakMap();
+
+  function apiScoreIsFail(score) {
+    return Boolean(score && typeof score === "object" && score.passed === false);
+  }
+
+  function filterScoresForRecentDisplay(scores, showFails) {
+    if (showFails) return scores.slice();
+    return scores.filter((s) => !apiScoreIsFail(s));
+  }
 
   function findRecentPlaysListRoot() {
     const page = document.querySelector(
@@ -12862,6 +13314,68 @@ OsuExpertPlus.pages.userProfile = (() => {
   let _recentFailsDebounce = null;
 
   /**
+   * @param {HTMLElement} innerList
+   * @param {Object[]} scores
+   * @param {HTMLElement|null} modTemplate
+   * @param {string} emptyMessage
+   */
+  function populateRecentScoresInnerList(
+    innerList,
+    scores,
+    modTemplate,
+    emptyMessage,
+  ) {
+    innerList.textContent = "";
+    if (!scores.length) {
+      innerList.appendChild(
+        el("p", { class: "oep-recent-fails-empty" }, emptyMessage),
+      );
+      return;
+    }
+    const tpl = modTemplate instanceof HTMLElement ? modTemplate : null;
+    const rows = scores.map((s) => buildPlayDetailRowFromApiScore(s, tpl));
+    rows.forEach((r) => innerList.appendChild(r));
+    applyHideWeightedPp(innerList);
+    if (settings.isEnabled(SCORE_LIST_DETAILS_ID)) {
+      applyPpDecimals(innerList);
+      processElements(rows, scores);
+      enrichPlayDetailRowsMaxComboFromAttributes(rows, scores).catch(() => {});
+    }
+    if (settings.isEnabled(IDS.MOD_ICONS_AS_ACRONYMS)) {
+      injectModIconsAcronymStyles();
+      applyModIconsAsAcronyms(innerList);
+    }
+    if (settings.isEnabled(MODDED_SR_ID)) {
+      if (!_srObserver) initSrObserver();
+      rows.forEach(_observeRow);
+    }
+    if (settings.isEnabled(RANKS_CARD_BG_FEATURE_ID)) {
+      injectRanksDateHighlightStyles();
+      applyRanksCardBackgrounds(innerList);
+    }
+  }
+
+  function repopulateRecentScoresWrap(wrap) {
+    if (!(wrap instanceof HTMLElement)) return;
+    const innerList = wrap.querySelector(":scope > .play-detail-list");
+    if (!(innerList instanceof HTMLElement)) return;
+    const all = recentScoresFullCache.get(wrap);
+    if (!all) return;
+    const showFails = settings.isEnabled(RECENT_SCORES_SHOW_FAILS_ID);
+    const filtered = filterScoresForRecentDisplay(all, showFails);
+    const emptyMsg =
+      !filtered.length && all.length && !showFails
+        ? RECENT_FAILS_EMPTY_FILTERED_MSG
+        : RECENT_FAILS_EMPTY_MSG;
+    populateRecentScoresInnerList(
+      innerList,
+      filtered,
+      findOsuModTemplateNode(),
+      emptyMsg,
+    );
+  }
+
+  /**
    * Mount once per (list element identity): section below official Recent plays + show more.
    * @param {string} userId
    * @param {string} mode
@@ -12883,13 +13397,30 @@ OsuExpertPlus.pages.userProfile = (() => {
     ensurePlayDetailStylesForRecent();
 
     const wrap = el("div", { class: RECENT_FAILS_WRAP_CLASS });
-    wrap.appendChild(
+    const header = el("div", { class: "oep-recent-fails-header" });
+    header.appendChild(
       el(
         "h3",
         { class: "title title--page-extra-small" },
-        "Recent scores (including fails)",
+        "Recent scores",
       ),
     );
+    const showFailsCb = document.createElement("input");
+    showFailsCb.type = "checkbox";
+    showFailsCb.className = "oep-recent-show-fails";
+    showFailsCb.checked = settings.isEnabled(RECENT_SCORES_SHOW_FAILS_ID);
+    showFailsCb.addEventListener("change", () => {
+      settings.set(RECENT_SCORES_SHOW_FAILS_ID, showFailsCb.checked);
+    });
+    header.appendChild(
+      el(
+        "label",
+        { class: "oep-recent-fails-toggle" },
+        showFailsCb,
+        "Show failed scores",
+      ),
+    );
+    wrap.appendChild(header);
     const innerList = el("div", {
       class: `play-detail-list ${SCORE_LIST_LAYOUT_CLASS}`,
     });
@@ -12917,10 +13448,13 @@ OsuExpertPlus.pages.userProfile = (() => {
     innerList.textContent = "";
     if (!scores.length) {
       innerList.appendChild(
-        el("p", { class: "oep-recent-fails-empty" }, "No scores found."),
+        el("p", { class: "oep-recent-fails-empty" }, RECENT_FAILS_EMPTY_MSG),
       );
+      removeOfficialRecentPlaysSection(listRoot);
       return;
     }
+
+    recentScoresFullCache.set(wrap, scores);
 
     let modTemplate = findOsuModTemplateNode();
     if (
@@ -12930,23 +13464,15 @@ OsuExpertPlus.pages.userProfile = (() => {
       modTemplate = await waitForOsuModTemplate(2500);
     }
     const tpl = modTemplate instanceof HTMLElement ? modTemplate : null;
-    const rows = scores.map((s) => buildPlayDetailRowFromApiScore(s, tpl));
-    rows.forEach((r) => innerList.appendChild(r));
 
-    applyHideWeightedPp(innerList);
-    if (settings.isEnabled(SCORE_LIST_DETAILS_ID)) {
-      applyPpDecimals(innerList);
-      processElements(rows, scores);
-      enrichPlayDetailRowsMaxComboFromAttributes(rows, scores).catch(() => {});
-    }
-    if (settings.isEnabled(IDS.MOD_ICONS_AS_ACRONYMS)) {
-      injectModIconsAcronymStyles();
-      applyModIconsAsAcronyms(innerList);
-    }
-    if (settings.isEnabled(MODDED_SR_ID)) {
-      if (!_srObserver) initSrObserver();
-      rows.forEach(_observeRow);
-    }
+    const showFails = settings.isEnabled(RECENT_SCORES_SHOW_FAILS_ID);
+    showFailsCb.checked = showFails;
+    const filtered = filterScoresForRecentDisplay(scores, showFails);
+    const emptyMsg =
+      !filtered.length && scores.length && !showFails
+        ? RECENT_FAILS_EMPTY_FILTERED_MSG
+        : RECENT_FAILS_EMPTY_MSG;
+    populateRecentScoresInnerList(innerList, filtered, tpl, emptyMsg);
 
     removeOfficialRecentPlaysSection(listRoot);
   }
@@ -12959,6 +13485,19 @@ OsuExpertPlus.pages.userProfile = (() => {
    */
   function startRecentScoresWithFailsObserver(userId, mode) {
     let cancelled = false;
+
+    const unsubRecentFailsShow = settings.onChange(
+      RECENT_SCORES_SHOW_FAILS_ID,
+      () => {
+        document.querySelectorAll(`.${RECENT_FAILS_WRAP_CLASS}`).forEach((w) => {
+          if (!(w instanceof HTMLElement)) return;
+          const input = w.querySelector("input.oep-recent-show-fails");
+          const on = settings.isEnabled(RECENT_SCORES_SHOW_FAILS_ID);
+          if (input instanceof HTMLInputElement) input.checked = on;
+          repopulateRecentScoresWrap(w);
+        });
+      },
+    );
 
     const run = () => {
       if (cancelled) return;
@@ -12985,6 +13524,7 @@ OsuExpertPlus.pages.userProfile = (() => {
     return () => {
       cancelled = true;
       clearTimeout(_recentFailsDebounce);
+      unsubRecentFailsShow();
       obs.disconnect();
       document
         .querySelectorAll(`.${RECENT_FAILS_WRAP_CLASS}`)
@@ -13214,6 +13754,19 @@ OsuExpertPlus.pages.userProfile = (() => {
       z-index: -2;
       pointer-events: none;
     }
+    @media (min-width: 900px) {
+      ${RANKS_CARD_BG_SELECTOR}.play-detail--pin-sortable {
+        background: transparent;
+      }
+      ${RANKS_CARD_BG_SELECTOR}.play-detail--pin-sortable::before,
+      ${RANKS_CARD_BG_SELECTOR}.play-detail--pin-sortable .${RANKS_CARD_BG_IMG_CLASS} {
+        -webkit-clip-path: inset(0 0 0 var(--pin-sortable-handle-width, 20px) round 6px);
+        clip-path: inset(0 0 0 var(--pin-sortable-handle-width, 20px) round 6px);
+      }
+      ${RANKS_CARD_BG_SELECTOR}.play-detail--pin-sortable::after {
+        inset: 0 0 0 var(--pin-sortable-handle-width, 20px);
+      }
+    }
     ${RANKS_CARD_BG_SELECTOR}::after {
       content: "";
       position: absolute;
@@ -13391,6 +13944,18 @@ OsuExpertPlus.pages.userProfile = (() => {
   }
 
   /**
+   * @param {Element} root  Top ranks page, or a `.play-detail-list` element
+   * @returns {HTMLElement[]}
+   */
+  function queryPlayDetailScoreRows(root) {
+    if (!(root instanceof HTMLElement)) return [];
+    if (root.classList.contains("play-detail-list")) {
+      return Array.from(root.querySelectorAll(":scope > .play-detail"));
+    }
+    return Array.from(root.querySelectorAll(".play-detail-list .play-detail"));
+  }
+
+  /**
    * @param {Element} rowEl
    * @returns {string|null}
    */
@@ -13449,9 +14014,7 @@ OsuExpertPlus.pages.userProfile = (() => {
       );
     }
 
-    topRanksRoot
-      .querySelectorAll(".play-detail-list .play-detail")
-      .forEach((rowEl) => {
+    queryPlayDetailScoreRows(topRanksRoot).forEach((rowEl) => {
         const beatmapsetId = getRanksRowBeatmapsetId(rowEl);
         if (!beatmapsetId) {
           ranksCardBgObserver?.unobserve(rowEl);
@@ -13699,6 +14262,13 @@ OsuExpertPlus.pages.userProfile = (() => {
           .querySelectorAll(`.${RANKS_DATE_HIGHLIGHT_CLASS}`)
           .forEach((row) => row.classList.remove(RANKS_DATE_HIGHLIGHT_CLASS));
       }
+      if (settings.isEnabled(RANKS_CARD_BG_FEATURE_ID)) {
+        document
+          .querySelectorAll(`.${RECENT_FAILS_WRAP_CLASS} .play-detail-list`)
+          .forEach((listEl) => {
+            if (listEl instanceof HTMLElement) applyRanksCardBackgrounds(listEl);
+          });
+      }
     };
 
     const schedule = () => {
@@ -13725,8 +14295,14 @@ OsuExpertPlus.pages.userProfile = (() => {
 
     const unsubBg = settings.onChange(RANKS_CARD_BG_FEATURE_ID, (enabled) => {
       if (enabled) {
+        injectRanksDateHighlightStyles();
         const page = document.querySelector(RANKS_PAGE_SELECTOR);
         if (page instanceof HTMLElement) applyRanksCardBackgrounds(page);
+        document
+          .querySelectorAll(`.${RECENT_FAILS_WRAP_CLASS} .play-detail-list`)
+          .forEach((listEl) => {
+            if (listEl instanceof HTMLElement) applyRanksCardBackgrounds(listEl);
+          });
       } else {
         revertRanksCardBackgrounds();
       }
@@ -16928,12 +17504,24 @@ OsuExpertPlus.pages.userProfile = (() => {
 
     bind();
     obs = new MutationObserver((mutations) => {
-      if (
-        mutationsIncludeSelector(
-          mutations,
-          'div.js-sortable--page[data-page-id], a[href^="#"]',
-        )
-      ) {
+      let needsRebind = mutationsIncludeSelector(
+        mutations,
+        'div.js-sortable--page[data-page-id], a[href^="#"]',
+      );
+
+      if (!needsRebind) {
+        for (const mutation of mutations) {
+          if (!mutation.addedNodes.length) continue;
+          const target = mutation.target;
+          if (!(target instanceof Element)) continue;
+          if (target.closest(`.${SECTION_COLLAPSE_PAGE_CLASS}`)) {
+            needsRebind = true;
+            break;
+          }
+        }
+      }
+
+      if (needsRebind) {
         clearTimeout(rebindTimer);
         rebindTimer = setTimeout(bind, 80);
       }
