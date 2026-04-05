@@ -16,22 +16,35 @@ A userscript for [osu.ppy.sh](https://osu.ppy.sh). Some QoL changes are included
 **Beatmap Cards**
 
 - Play count & favourite count always visible
-- Extra info such as source, BPM, drain length on beatmap cards
+- Extra metadata on beatmap cards (source, BPM, drain length)
 - Star rating range per mode
 - Full numbers instead of abbreviated (159,915 instead of 159.9K)
 
 **User Profile**
 
+- Collapsible profile badges and sections (me!, Ranks, etc.)
+- BBCode helper/live preview for userpage editing
 - PP to two decimal places + colour-coded hit stats on score rows
 - Modded star ratings next to difficulty names (this one needs API credentials)
-- Mod acronyms instead of icons (HD, DT, …)
-- Option to hide the Classic (CL) mod
+- Mod acronyms instead of icons
+- Option to hide Classic (CL) mod
 - Beatmap background as score card background
-- Score place number (#1, #2, …) on rank cards
+- Score place number on rank cards
+- Period filter for pinned/top plays
 
-**Beatmap Detail**
+**Beatmap Page**
 
-- Discussion pages default to the Total tab
-- OMDB difficulty ratings & star voting (needs an OMDB API key)
-- Expandable gameplay preview on beatmapset pages
+- Show copyable beatmap metadata and full description
+- Show username and avatar on favourite list
+- OMDB integration: difficulty ratings & star voting (needs an OMDB API key)
+- Gameplay preview on beatmapset pages
 - Better mod selection on beatmapset pages (this one always bothered me a lot personally)
+- Period filter for recent scores on leaderboard
+- Better colouring/highlighting for hit statistics on scoreboard
+- Show scores up to 100 on leaderboard
+- Show beatconnect download button
+
+**Modding Thread**
+
+- Discussion pages default to the Total tab (ranked mapsets usually send you to praise tab by default)
+- Markdown/preview support for modding thread
