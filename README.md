@@ -42,7 +42,7 @@ A userscript for [osu.ppy.sh](https://osu.ppy.sh). Some QoL changes are included
 - Show username and avatar on favourite list
 - OMDB integration: difficulty ratings & star voting (needs an OMDB API key)
 - Gameplay preview on beatmapset pages
-- Better mod selection on beatmapset pages (this one always bothered me a lot personally)
+- Improved mod selection on beatmapset pages
 - Period filter for recent scores on leaderboard
 - Better colouring/highlighting for hit statistics on scoreboard
 - Show scores up to 100 on leaderboard
