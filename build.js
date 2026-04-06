@@ -25,6 +25,7 @@ const FILES = [
   "src/utils/beatmap-card-extra.js",
   "src/utils/beatmap-card-stats.js",
   "src/utils/mod-icons-as-acronyms.js",
+  "src/utils/beatmapsets-listing-mode.js",
   "src/pages/beatmapsets-listing.js",
   "src/pages/beatmap-detail.js",
   "src/pages/user-profile.js",
@@ -41,7 +42,7 @@ const METADATA = `\
 // ==UserScript==
 // @name         osu! Expert+
 // @namespace    https://github.com/inix1257/osu_expertplus
-// @version      0.2.5
+// @version      0.2.7
 // @description  Adds extra QoL features to osu.ppy.sh
 // @author       inix1257
 // @homepageURL  https://github.com/inix1257/osu_expertplus
@@ -82,6 +83,7 @@ function build() {
 (function () {
   OsuExpertPlus.settingsPanel.init();
   OsuExpertPlus.modIconsAsAcronyms.install(OsuExpertPlus.settings);
+  OsuExpertPlus.beatmapsetsListingMode.installLinkPatcher();
 
   const router = new OsuExpertPlus.Router();
   router.init();
