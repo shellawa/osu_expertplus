@@ -935,6 +935,94 @@ OsuExpertPlus.pages.userProfile = (() => {
   /** @type {Map<string, { sr: number|null, maxCombo: number|null }>} */
   const _attrsSessionCache = new Map();
 
+  const BEATMAP_ATTRS_CACHE_GM_KEY = "oep.beatmapAttributesCache.v1";
+  const BEATMAP_ATTRS_CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+  const BEATMAP_ATTRS_CACHE_MAX_ENTRIES = 600;
+
+  function _readBeatmapAttrsGmStore() {
+    try {
+      const raw = GM_getValue(BEATMAP_ATTRS_CACHE_GM_KEY, "");
+      if (raw == null || raw === "") return {};
+      const o = typeof raw === "string" ? JSON.parse(raw) : raw;
+      return o && typeof o === "object" ? o : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function _writeBeatmapAttrsGmStore(store) {
+    try {
+      GM_setValue(BEATMAP_ATTRS_CACHE_GM_KEY, JSON.stringify(store));
+    } catch (_) {}
+  }
+
+  function _pruneBeatmapAttrsGmStore(store, now) {
+    for (const k of Object.keys(store)) {
+      const ent = store[k];
+      const t = Number(ent?.t);
+      if (
+        !Number.isFinite(t) ||
+        now - t > BEATMAP_ATTRS_CACHE_TTL_MS
+      ) {
+        delete store[k];
+      }
+    }
+    const keys = Object.keys(store);
+    if (keys.length <= BEATMAP_ATTRS_CACHE_MAX_ENTRIES) return;
+    keys.sort((a, b) => (Number(store[a]?.t) || 0) - (Number(store[b]?.t) || 0));
+    for (let i = 0; i < keys.length - BEATMAP_ATTRS_CACHE_MAX_ENTRIES; i++) {
+      delete store[keys[i]];
+    }
+  }
+
+  /**
+   * @param {string} key
+   * @returns {{ sr: number|null, maxCombo: number|null }|undefined}
+   */
+  function _beatmapAttrsPersistentGet(key) {
+    const store = _readBeatmapAttrsGmStore();
+    const ent = store[key];
+    const t = Number(ent?.t);
+    if (
+      !ent ||
+      typeof ent !== "object" ||
+      !Number.isFinite(t) ||
+      Date.now() - t > BEATMAP_ATTRS_CACHE_TTL_MS
+    ) {
+      if (key in store) {
+        delete store[key];
+        _writeBeatmapAttrsGmStore(store);
+      }
+      return undefined;
+    }
+    return {
+      sr:
+        ent.sr != null && Number.isFinite(Number(ent.sr))
+          ? Number(ent.sr)
+          : null,
+      maxCombo:
+        ent.maxCombo != null && Number.isFinite(Number(ent.maxCombo))
+          ? Number(ent.maxCombo)
+          : null,
+    };
+  }
+
+  /**
+   * @param {string} key
+   * @param {{ sr: number|null, maxCombo: number|null }} packed
+   */
+  function _beatmapAttrsPersistentSet(key, packed) {
+    const store = _readBeatmapAttrsGmStore();
+    const now = Date.now();
+    _pruneBeatmapAttrsGmStore(store, now);
+    store[key] = {
+      t: now,
+      sr: packed.sr,
+      maxCombo: packed.maxCombo,
+    };
+    _writeBeatmapAttrsGmStore(store);
+  }
+
   function _getCachedAttrs(key) {
     return _attrsSessionCache.get(key);
   }
@@ -946,8 +1034,8 @@ OsuExpertPlus.pages.userProfile = (() => {
       .sort();
   }
 
-  function _srCacheKey(beatmapId, diffMods) {
-    return `${beatmapId}:${diffMods.join("+") || "NM"}`;
+  function _srCacheKey(beatmapId, diffMods, ruleset) {
+    return `${beatmapId}:${ruleset}:${diffMods.join("+") || "NM"}`;
   }
 
   function _extractRowData(rowEl) {
@@ -969,9 +1057,15 @@ OsuExpertPlus.pages.userProfile = (() => {
    * @returns {Promise<{ key: string, sr: number|null, maxCombo: number|null }>}
    */
   async function _fetchBeatmapAttributesCached(beatmapId, diffMods, ruleset) {
-    const key = _srCacheKey(beatmapId, diffMods);
+    const key = _srCacheKey(beatmapId, diffMods, ruleset);
     const hit = _getCachedAttrs(key);
     if (hit !== undefined) return { key, ...hit };
+
+    const persisted = _beatmapAttrsPersistentGet(key);
+    if (persisted !== undefined) {
+      _attrsSessionCache.set(key, persisted);
+      return { key, ...persisted };
+    }
 
     if (!_attrsInFlight.has(key)) {
       const p = OsuExpertPlus.api
@@ -989,6 +1083,7 @@ OsuExpertPlus.pages.userProfile = (() => {
               : null;
           const packed = { sr, maxCombo };
           _attrsSessionCache.set(key, packed);
+          _beatmapAttrsPersistentSet(key, packed);
           return packed;
         })
         .catch(() => ({ sr: null, maxCombo: null }))
@@ -1541,54 +1636,46 @@ OsuExpertPlus.pages.userProfile = (() => {
     return scores.filter((s) => !apiScoreIsFail(s));
   }
 
-  function findRecentPlaysListRoot() {
-    const page = document.querySelector(
+  function findHistoricalPage() {
+    return document.querySelector(
       'div.js-sortable--page[data-page-id="historical"]',
     );
-    if (!page) return null;
-
-    const h3s = page.querySelectorAll("h3.title.title--page-extra-small");
-    for (const h3 of h3s) {
-      if (!/\brecent\b/i.test(h3.textContent)) continue;
-      const next = h3.nextElementSibling;
-      if (
-        next instanceof HTMLElement &&
-        next.classList.contains("play-detail-list")
-      ) {
-        return next;
-      }
-    }
-    return null;
   }
 
-  /** Historical → “Most Watched Replays” (osu `score_replay_stats`) play-detail list. */
-  function findMostWatchedReplaysListRoot() {
-    const page = document.querySelector(
-      'div.js-sortable--page[data-page-id="historical"]',
-    );
+  /**
+   * osu-web always renders Recent plays as the first play-detail-list inside
+   * the historical section regardless of UI language. Matching by heading text
+   * fails on non-English interfaces, so use position instead.
+   */
+  function findRecentPlaysListRoot() {
+    const page = findHistoricalPage();
     if (!page) return null;
+    const lists = Array.from(page.querySelectorAll(".play-detail-list")).filter(
+      (el) => el instanceof HTMLElement,
+    );
+    return lists[0] ?? null;
+  }
 
-    const h3s = page.querySelectorAll("h3.title.title--page-extra-small");
-    for (const h3 of h3s) {
-      if (!/most\s+watched/i.test(h3.textContent || "")) continue;
-      const next = h3.nextElementSibling;
-      if (
-        next instanceof HTMLElement &&
-        next.classList.contains("play-detail-list")
-      ) {
-        return next;
-      }
-    }
-    return null;
+  /**
+   * osu-web renders "Most Watched Replays" as the second play-detail-list in
+   * historical. Language-independent positional lookup.
+   */
+  function findMostWatchedReplaysListRoot() {
+    const page = findHistoricalPage();
+    if (!page) return null;
+    const lists = Array.from(page.querySelectorAll(".play-detail-list")).filter(
+      (el) => el instanceof HTMLElement,
+    );
+    return lists[1] ?? null;
   }
 
   function removeOfficialRecentPlaysSection(listRoot) {
     if (!(listRoot instanceof HTMLElement)) return;
+    // Remove the h3 heading immediately before the list regardless of language.
     const prev = listRoot.previousElementSibling;
     if (
       prev instanceof HTMLElement &&
-      prev.matches("h3.title.title--page-extra-small") &&
-      /\brecent\b/i.test(prev.textContent || "")
+      prev.matches("h3.title.title--page-extra-small")
     ) {
       prev.remove();
     }
@@ -1656,7 +1743,7 @@ OsuExpertPlus.pages.userProfile = (() => {
       if (bmId == null) continue;
       const diffMods = _diffMods(modsAcronymsFromApiMods(score.mods));
       const ruleset = rulesetIdToMode(score.ruleset_id);
-      const key = _srCacheKey(bmId, diffMods);
+      const key = _srCacheKey(bmId, diffMods, ruleset);
       if (!unique.has(key)) {
         unique.set(key, { beatmapId: bmId, diffMods, ruleset });
       }
@@ -1674,7 +1761,8 @@ OsuExpertPlus.pages.userProfile = (() => {
       const bmId = score?.beatmap?.id;
       if (bmId == null) continue;
       const diffMods = _diffMods(modsAcronymsFromApiMods(score.mods));
-      const key = _srCacheKey(bmId, diffMods);
+      const ruleset = rulesetIdToMode(score.ruleset_id);
+      const key = _srCacheKey(bmId, diffMods, ruleset);
       const attrs = _getCachedAttrs(key);
       const maxCombo = attrs?.maxCombo;
       if (maxCombo != null) _applyApiMaxComboToComboInline(rows[i], maxCombo);
@@ -2051,6 +2139,12 @@ OsuExpertPlus.pages.userProfile = (() => {
       injectRanksCardBgLayoutStyles();
       applyRanksCardBackgrounds(innerList);
     }
+    if (settings.isEnabled(SCORE_PLACE_NUMBER_ID)) {
+      scorePlaceNumberStyle.inject();
+      applyPlaceNumbers(innerList);
+    } else {
+      revertPlaceNumbers(innerList);
+    }
   }
 
   function repopulateRecentScoresWrap(wrap) {
@@ -2206,6 +2300,10 @@ OsuExpertPlus.pages.userProfile = (() => {
       SCORE_HIT_STATISTICS_ID,
       repopulateRecentOnScoreDisplayChange,
     );
+    const unsubRecentPlaceNumbers = settings.onChange(
+      SCORE_PLACE_NUMBER_ID,
+      repopulateRecentOnScoreDisplayChange,
+    );
 
     const run = () => {
       if (cancelled) return;
@@ -2235,6 +2333,7 @@ OsuExpertPlus.pages.userProfile = (() => {
       unsubRecentFailsShow();
       unsubRecentPpDecimals();
       unsubRecentHitStatistics();
+      unsubRecentPlaceNumbers();
       obs.disconnect();
       document
         .querySelectorAll(`.${RECENT_FAILS_WRAP_CLASS}`)

@@ -64,7 +64,7 @@ OsuExpertPlus.settings = (() => {
       id: "userProfile.scoreCardPlaceNumber",
       label: "Score place number on rank cards",
       description:
-        "On Best performance only: shows #1, #2, … before the beatmap title on each score row in the Ranks section.",
+        "On Best performance: shows #1, #2, … before the beatmap title. On Expert+ Recent scores (Historical): #1 is the most recent visible score, then #2, … (respects Show failed scores).",
       group: "User Profile",
       default: true,
     },

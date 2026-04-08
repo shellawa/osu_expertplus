@@ -252,6 +252,41 @@ OsuExpertPlus.api = (() => {
     return { scores };
   }
 
+  /** Throttle concurrent beatmap attributes calls (profile SR badges, etc.). */
+  const BEATMAP_ATTRS_MAX_CONCURRENT = 2;
+  const BEATMAP_ATTRS_MIN_START_GAP_MS = 120;
+
+  let _beatmapAttrsRunning = 0;
+  /** @type {number}  Earliest time the next request may start (performance.now()). */
+  let _beatmapAttrsNextStartMs = 0;
+  /** @type {{ run: () => Promise<unknown>, resolve: (v: unknown) => void, reject: (e: unknown) => void }[]} */
+  const _beatmapAttrsQueue = [];
+
+  function _pumpBeatmapAttributesQueue() {
+    while (_beatmapAttrsRunning < BEATMAP_ATTRS_MAX_CONCURRENT) {
+      if (!_beatmapAttrsQueue.length) return;
+      const now = performance.now();
+      if (now < _beatmapAttrsNextStartMs) {
+        setTimeout(
+          _pumpBeatmapAttributesQueue,
+          Math.ceil(_beatmapAttrsNextStartMs - now),
+        );
+        return;
+      }
+      _beatmapAttrsNextStartMs = now + BEATMAP_ATTRS_MIN_START_GAP_MS;
+      const item = _beatmapAttrsQueue.shift();
+      if (!item) return;
+      _beatmapAttrsRunning++;
+      Promise.resolve()
+        .then(() => item.run())
+        .then(item.resolve, item.reject)
+        .finally(() => {
+          _beatmapAttrsRunning--;
+          _pumpBeatmapAttributesQueue();
+        });
+    }
+  }
+
   /**
    * POST /beatmaps/{beatmap}/attributes — returns difficulty attributes with
    * the given mods applied, including the modded star_rating.
@@ -261,24 +296,33 @@ OsuExpertPlus.api = (() => {
    * @param {string}        ruleset  'osu' | 'taiko' | 'fruits' | 'mania'
    * @returns {Promise<{attributes: {star_rating: number, max_combo: number, ...}}>}
    */
-  async function postBeatmapAttributes(beatmapId, mods, ruleset = "osu") {
-    const url = `${BASE}/beatmaps/${beatmapId}/attributes`;
-    const headers = await buildHeaders();
-    headers["Content-Type"] = "application/json";
+  function postBeatmapAttributes(beatmapId, mods, ruleset = "osu") {
+    return new Promise((resolve, reject) => {
+      _beatmapAttrsQueue.push({
+        run: async () => {
+          const url = `${BASE}/beatmaps/${beatmapId}/attributes`;
+          const headers = await buildHeaders();
+          headers["Content-Type"] = "application/json";
 
-    const resp = await fetch(url, {
-      method: "POST",
-      headers,
-      credentials: "include",
-      body: JSON.stringify({ mods, ruleset }),
+          const resp = await fetch(url, {
+            method: "POST",
+            headers,
+            credentials: "include",
+            body: JSON.stringify({ mods, ruleset }),
+          });
+
+          if (!resp.ok) {
+            throw new Error(
+              `[osu! Expert+] API ${resp.status}: beatmap attributes ${beatmapId}`,
+            );
+          }
+          return resp.json();
+        },
+        resolve,
+        reject,
+      });
+      _pumpBeatmapAttributesQueue();
     });
-
-    if (!resp.ok) {
-      throw new Error(
-        `[osu! Expert+] API ${resp.status}: beatmap attributes ${beatmapId}`,
-      );
-    }
-    return resp.json();
   }
 
   return {
