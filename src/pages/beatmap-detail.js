@@ -9737,6 +9737,11 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
 
       const hasVer = Boolean(version);
       if (verEl.textContent !== version) verEl.textContent = version;
+      if (hasVer) {
+        verEl.setAttribute("title", version);
+      } else {
+        verEl.removeAttribute("title");
+      }
       const verDisplay = hasVer ? "" : "none";
       if (verEl.style.display !== verDisplay) verEl.style.display = verDisplay;
 

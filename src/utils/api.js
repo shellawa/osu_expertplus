@@ -87,6 +87,11 @@ OsuExpertPlus.api = (() => {
     return get(`${BASE}/beatmapsets/${id}`, params);
   }
 
+  /** Fetch a single beatmap by id. */
+  function getBeatmap(beatmapId) {
+    return get(`${BASE}/beatmaps/${beatmapId}`);
+  }
+
   /** Fetch user profile by id or username. */
   function getUser(idOrName, mode) {
     return get(`${BASE}/users/${idOrName}`, mode ? { mode } : {});
@@ -335,6 +340,7 @@ OsuExpertPlus.api = (() => {
     getBeatmapsetDiscussions,
     getBeatmapsetDiscussionPosts,
     getBeatmapset,
+    getBeatmap,
     getUser,
     searchBeatmapsets,
     getUserBestScores,
