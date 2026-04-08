@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         osu! Expert+
 // @namespace    https://github.com/inix1257/osu_expertplus
-// @version      0.2.14
+// @version      0.2.15
 // @description  Adds extra QoL features to osu.ppy.sh
 // @author       inix1257
 // @homepageURL  https://github.com/inix1257/osu_expertplus
@@ -558,6 +558,11 @@ OsuExpertPlus.api = (() => {
     return get(`${BASE}/beatmapsets/${id}`, params);
   }
 
+  /** Fetch a single beatmap by id. */
+  function getBeatmap(beatmapId) {
+    return get(`${BASE}/beatmaps/${beatmapId}`);
+  }
+
   /** Fetch user profile by id or username. */
   function getUser(idOrName, mode) {
     return get(`${BASE}/users/${idOrName}`, mode ? { mode } : {});
@@ -806,6 +811,7 @@ OsuExpertPlus.api = (() => {
     getBeatmapsetDiscussions,
     getBeatmapsetDiscussionPosts,
     getBeatmapset,
+    getBeatmap,
     getUser,
     searchBeatmapsets,
     getUserBestScores,
@@ -15104,6 +15110,11 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
 
       const hasVer = Boolean(version);
       if (verEl.textContent !== version) verEl.textContent = version;
+      if (hasVer) {
+        verEl.setAttribute("title", version);
+      } else {
+        verEl.removeAttribute("title");
+      }
       const verDisplay = hasVer ? "" : "none";
       if (verEl.style.display !== verDisplay) verEl.style.display = verDisplay;
 
@@ -17049,6 +17060,29 @@ OsuExpertPlus.pages.userProfile = (() => {
       outline: 2px solid hsl(var(--hsl-b6));
       outline-offset: 2px;
     }
+    .oep-clear-sr-cache-btn {
+      appearance: none;
+      background: none;
+      border: 1px solid hsl(var(--hsl-b5));
+      border-radius: 3px;
+      color: hsl(var(--hsl-c1));
+      cursor: pointer;
+      font-size: 0.75rem;
+      font-family: inherit;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      line-height: 1;
+      padding: 3px 7px;
+      transition: border-color 0.1s, color 0.1s;
+      white-space: nowrap;
+    }
+    .oep-clear-sr-cache-btn:hover {
+      border-color: hsl(var(--hsl-c1));
+      color: hsl(var(--hsl-l1));
+    }
+    .oep-clear-sr-cache-btn:active {
+      opacity: 0.7;
+    }
   `;
   const playDetailStyle = manageStyle(PLAY_DETAIL_STYLE_ID, PLAY_DETAIL_CSS);
 
@@ -17481,6 +17515,43 @@ OsuExpertPlus.pages.userProfile = (() => {
   const BEATMAP_ATTRS_CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
   const BEATMAP_ATTRS_CACHE_MAX_ENTRIES = 600;
 
+  const RANKED_STATUS_RANKED = 1;
+  const RANKED_STATUS_LOVED = 4;
+
+  function _isCacheableRankedStatus(ranked) {
+    return (
+      ranked === undefined ||
+      ranked === RANKED_STATUS_RANKED ||
+      ranked === RANKED_STATUS_LOVED
+    );
+  }
+
+  /** @type {Map<string|number, Promise<number|null>>} */
+  const _beatmapMaxComboInFlight = new Map();
+
+  /**
+   * Fetch max_combo for a beatmap via GET /api/v2/beatmaps/{id} when the
+   * attributes endpoint returns 0. Results are not cached persistently since
+   * this is only called as a fallback for a known API bug.
+   */
+  function _fetchBeatmapMaxCombo(beatmapId) {
+    if (_beatmapMaxComboInFlight.has(beatmapId)) {
+      return _beatmapMaxComboInFlight.get(beatmapId);
+    }
+    const p = OsuExpertPlus.api
+      .getBeatmap(beatmapId)
+      .then((data) => {
+        const mc = data?.max_combo;
+        return mc != null && Number.isFinite(Number(mc)) && Number(mc) > 0
+          ? Number(mc)
+          : null;
+      })
+      .catch(() => null)
+      .finally(() => _beatmapMaxComboInFlight.delete(beatmapId));
+    _beatmapMaxComboInFlight.set(beatmapId, p);
+    return p;
+  }
+
   function _readBeatmapAttrsGmStore() {
     try {
       const raw = GM_getValue(BEATMAP_ATTRS_CACHE_GM_KEY, "");
@@ -17503,6 +17574,8 @@ OsuExpertPlus.pages.userProfile = (() => {
       const ent = store[k];
       const t = Number(ent?.t);
       if (!Number.isFinite(t) || now - t > BEATMAP_ATTRS_CACHE_TTL_MS) {
+        delete store[k];
+      } else if (ent.maxCombo === 0) {
         delete store[k];
       }
     }
@@ -17536,15 +17609,21 @@ OsuExpertPlus.pages.userProfile = (() => {
       }
       return undefined;
     }
+    const maxCombo =
+      ent.maxCombo != null && Number.isFinite(Number(ent.maxCombo))
+        ? Number(ent.maxCombo)
+        : null;
+    if (maxCombo === 0) {
+      delete store[key];
+      _writeBeatmapAttrsGmStore(store);
+      return undefined;
+    }
     return {
       sr:
         ent.sr != null && Number.isFinite(Number(ent.sr))
           ? Number(ent.sr)
           : null,
-      maxCombo:
-        ent.maxCombo != null && Number.isFinite(Number(ent.maxCombo))
-          ? Number(ent.maxCombo)
-          : null,
+      maxCombo,
     };
   }
 
@@ -17595,9 +17674,18 @@ OsuExpertPlus.pages.userProfile = (() => {
   const _attrsInFlight = new Map();
 
   /**
+   * @param {string|number} beatmapId
+   * @param {string[]} diffMods
+   * @param {string} ruleset
+   * @param {{ ranked?: number }} [opts]
    * @returns {Promise<{ key: string, sr: number|null, maxCombo: number|null }>}
    */
-  async function _fetchBeatmapAttributesCached(beatmapId, diffMods, ruleset) {
+  async function _fetchBeatmapAttributesCached(
+    beatmapId,
+    diffMods,
+    ruleset,
+    opts,
+  ) {
     const key = _srCacheKey(beatmapId, diffMods, ruleset);
     const hit = _getCachedAttrs(key);
     if (hit !== undefined) return { key, ...hit };
@@ -17608,23 +17696,33 @@ OsuExpertPlus.pages.userProfile = (() => {
       return { key, ...persisted };
     }
 
+    const ranked = opts?.ranked;
+
     if (!_attrsInFlight.has(key)) {
       const p = OsuExpertPlus.api
         .postBeatmapAttributes(beatmapId, diffMods, ruleset)
-        .then((data) => {
+        .then(async (data) => {
           const attrs = data?.attributes ?? {};
           const sr =
             attrs.star_rating != null &&
             Number.isFinite(Number(attrs.star_rating))
               ? Number(attrs.star_rating)
               : null;
-          const maxCombo =
+          let maxCombo =
             attrs.max_combo != null && Number.isFinite(Number(attrs.max_combo))
               ? Number(attrs.max_combo)
               : null;
+
+          if (maxCombo === 0) {
+            const fallback = await _fetchBeatmapMaxCombo(beatmapId);
+            maxCombo = fallback != null ? fallback : null;
+          }
+
           const packed = { sr, maxCombo };
           _attrsSessionCache.set(key, packed);
-          _beatmapAttrsPersistentSet(key, packed);
+          if (_isCacheableRankedStatus(ranked)) {
+            _beatmapAttrsPersistentSet(key, packed);
+          }
           return packed;
         })
         .catch(() => ({ sr: null, maxCombo: null }))
@@ -18274,7 +18372,7 @@ OsuExpertPlus.pages.userProfile = (() => {
    * @param {Object[]} scores  same length and order as rows
    */
   async function enrichPlayDetailRowsMaxComboFromAttributes(rows, scores) {
-    /** @type {Map<string, { beatmapId: string|number, diffMods: string[], ruleset: string }>} */
+    /** @type {Map<string, { beatmapId: string|number, diffMods: string[], ruleset: string, ranked?: number }>} */
     const unique = new Map();
 
     for (let i = 0; i < scores.length; i++) {
@@ -18286,13 +18384,16 @@ OsuExpertPlus.pages.userProfile = (() => {
       const ruleset = rulesetIdToMode(score.ruleset_id);
       const key = _srCacheKey(bmId, diffMods, ruleset);
       if (!unique.has(key)) {
-        unique.set(key, { beatmapId: bmId, diffMods, ruleset });
+        const ranked = score?.beatmap?.ranked;
+        unique.set(key, { beatmapId: bmId, diffMods, ruleset, ranked });
       }
     }
 
     await Promise.all(
-      [...unique.values()].map(({ beatmapId, diffMods, ruleset }) =>
-        _fetchBeatmapAttributesCached(beatmapId, diffMods, ruleset),
+      [...unique.values()].map(({ beatmapId, diffMods, ruleset, ranked }) =>
+        _fetchBeatmapAttributesCached(beatmapId, diffMods, ruleset, {
+          ranked,
+        }),
       ),
     );
 
@@ -18890,6 +18991,25 @@ OsuExpertPlus.pages.userProfile = (() => {
         "Show failed scores",
       ),
     );
+    const clearCacheBtn = el(
+      "button",
+      {
+        class: "oep-clear-sr-cache-btn",
+        type: "button",
+        title:
+          "Clears cached modded star ratings and max combo. Use this if values look wrong or outdated after a beatmap is updated.",
+      },
+      "Clear SR cache",
+    );
+    clearCacheBtn.addEventListener("click", () => {
+      _attrsSessionCache.clear();
+      _writeBeatmapAttrsGmStore({});
+      clearCacheBtn.textContent = "Cleared!";
+      setTimeout(() => {
+        clearCacheBtn.textContent = "Clear SR cache";
+      }, 2000);
+    });
+    header.appendChild(clearCacheBtn);
     wrap.appendChild(header);
     const innerList = el("div", { class: "play-detail-list" });
     innerList.appendChild(
