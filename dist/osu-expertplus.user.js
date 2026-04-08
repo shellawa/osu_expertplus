@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         osu! Expert+
 // @namespace    https://github.com/inix1257/osu_expertplus
-// @version      0.2.12
+// @version      0.2.13
 // @description  Adds extra QoL features to osu.ppy.sh
 // @author       inix1257
 // @homepageURL  https://github.com/inix1257/osu_expertplus
@@ -656,7 +656,9 @@ OsuExpertPlus.api = (() => {
   /**
    * GET /beatmaps/{beatmap}/scores — top scores for a beatmap.
    * @param {string|number} beatmapId
-   * @param {{ mode?: string, mods?: string[], legacy_only?: number, type?: string, limit?: number }} [query]
+   * @param {{ mode?: string, mods?: string[], legacy_only?: number, type?: "global"|"country"|"friend"|"team", limit?: number }} [query]
+   *        `type` matches osu-web scoreboard tabs; `country` uses the logged-in
+   *        user’s country (same as the site). Requires `credentials: "include"`.
    * @returns {Promise<{ scores: object[] }>}
    */
   function getBeatmapScores(beatmapId, query) {
@@ -679,7 +681,9 @@ OsuExpertPlus.api = (() => {
    * path the webpage uses), not `/api/v2`. Richer / leaderboard-aligned payload
    * than the API route for some scores. `{beatmap}` is the difficulty id.
    * @param {string|number} beatmapId
-   * @param {{ mode?: string, mods?: string[], legacy_only?: number, type?: string, limit?: number }} [query]
+   * @param {{ mode?: string, mods?: string[], legacy_only?: number, type?: "global"|"country"|"friend"|"team", limit?: number }} [query]
+   *        `type` matches osu-web scoreboard tabs; `country` uses the logged-in
+   *        user’s country (same as the site). Requires `credentials: "include"`.
    * @returns {Promise<{ scores: object[] }>}
    */
   async function getBeatmapScoresWebsite(beatmapId, query) {
@@ -1244,8 +1248,6 @@ OsuExpertPlus.settings = (() => {
       "beatmapDetail.scoreboardHideCustomRateScores",
     SCOREBOARD_PLAYER_LOOKUP: "beatmapDetail.scoreboardPlayerLookup",
     DIFF_NAME_BESIDE_PICKER: "beatmapDetail.diffNameBesidePicker",
-    /** GM string (not a panel toggle): last leaderboard sort `column:asc|desc`; default score:desc. */
-    BEATMAP_SCOREBOARD_SORT_KEY: "beatmapDetail.scoreboardSortKey",
   });
 
   return {
@@ -4828,6 +4830,11 @@ OsuExpertPlus.modIconsAsAcronyms = (() => {
     "BR",
     "BU",
   ]);
+  /**
+   * osu-web `mod.less`: `.mod-type(Conversion, @osu-colour-purple-1)` — blue-purple
+   * chip (e.g. Classic / CL). Not DifficultyIncrease/Reduction/Fun.
+   */
+  const MOD_ACRONYM_CONVERSION = new Set(["CL"]);
 
   const MOD_ICONS_ACRONYM_CSS = `
     .${MOD_ICONS_ACRONYM_CLASS}.mod__icon {
@@ -4950,6 +4957,7 @@ OsuExpertPlus.modIconsAsAcronyms = (() => {
     const u = String(acronym).trim().toUpperCase();
     if (MOD_ACRONYM_REDUCTION.has(u)) return "mod--type-DifficultyReduction";
     if (MOD_ACRONYM_INCREASE.has(u)) return "mod--type-DifficultyIncrease";
+    if (MOD_ACRONYM_CONVERSION.has(u)) return "mod--type-Conversion";
     return "mod--type-Fun";
   }
 
@@ -5398,7 +5406,6 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
     IDS.SCOREBOARD_HIDE_CUSTOM_RATE_SCORES;
   const SCOREBOARD_PLAYER_LOOKUP_ID = IDS.SCOREBOARD_PLAYER_LOOKUP;
   const DIFF_NAME_BESIDE_PICKER_ID = IDS.DIFF_NAME_BESIDE_PICKER;
-  const BEATMAP_SCOREBOARD_SORT_GM_KEY = IDS.BEATMAP_SCOREBOARD_SORT_KEY;
   const beatmapPreview = OsuExpertPlus.beatmapPreview;
   const DISCUSSION_USER_CACHE = new Map();
 
@@ -5424,6 +5431,10 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
   const RATE_EDIT_ROW_HIDDEN_ATTR = "data-oep-rate-edit-filtered";
   /** In-page “hide custom rate scores” control; visibility follows whether any rate-edit row exists. */
   const RATE_EDIT_FILTER_BAR_ATTR = "data-oep-rate-edit-filter-bar";
+  /** Player lookup bar wrapper; sits inside `.oep-scoreboard-tools-row` with the rate filter. */
+  const SCOREBOARD_USER_SEARCH_ATTR = "data-oep-beatmap-user-search";
+  /** Flex row under mod filters holding player lookup (optional) and rate-edit filter (optional). */
+  const SCOREBOARD_TOOLS_ROW_ATTR = "data-oep-scoreboard-tools-row";
   const SCORE_USER_SEARCH_RESULT_ATTR = "data-oep-user-search-result";
   /** Marks the per-column sort control in `<th>` (re-mounted after osu-web React refresh). */
   const SCOREBOARD_SORT_ARROW_ATTR = "data-oep-scoreboard-sort-arrow";
@@ -7248,6 +7259,26 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       outline-offset: 1px;
       border-radius: 2px;
     }
+    .oep-scoreboard-tools-row {
+      box-sizing: border-box;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 0.75rem 1.25rem;
+      margin: 0 0 0.75rem 0;
+      width: 100%;
+    }
+    .oep-scoreboard-tools-row .oep-user-search {
+      margin: 0;
+      flex: 1 1 14rem;
+      min-width: 0;
+    }
+    .oep-scoreboard-tools-row .oep-rate-edit-filter {
+      margin: 0;
+      flex: 0 0 auto;
+      max-width: none;
+      padding-top: 7px;
+    }
     .oep-rate-edit-filter {
       box-sizing: border-box;
       margin: 0 0 0.5rem 0;
@@ -7272,6 +7303,10 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
     .oep-user-search {
       box-sizing: border-box;
       margin: 0 0 1rem 0;
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 100%;
     }
     .oep-user-search__bar {
       display: flex;
@@ -7768,6 +7803,44 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
   }
 
   /**
+   * Matches osu-web scoreboard tabs (global / country / friend / team). Team tab
+   * is omitted from the DOM when the viewer has no team; then only three tabs exist.
+   * @param {HTMLElement|null|undefined} scoreboardRoot  `.beatmapset-scoreboard`
+   * @returns {"global"|"country"|"friend"|"team"}
+   */
+  function readBeatmapScoreboardLeaderboardType(scoreboardRoot) {
+    const order = ["global", "country", "friend", "team"];
+    if (!(scoreboardRoot instanceof HTMLElement)) return "global";
+    const tabs = [
+      ...scoreboardRoot.querySelectorAll(":scope > .page-tabs > .page-tabs__tab"),
+    ];
+    if (tabs.length) {
+      const activeIdx = tabs.findIndex((t) =>
+        t.classList.contains("page-tabs__tab--active"),
+      );
+      const mapOrder =
+        tabs.length === 4 ? order : order.filter((t) => t !== "team");
+      if (activeIdx >= 0 && activeIdx < mapOrder.length) {
+        return /** @type {"global"|"country"|"friend"|"team"} */ (
+          mapOrder[activeIdx]
+        );
+      }
+    }
+    const raw = scoreboardRoot.getAttribute("data-scoreboard-state");
+    if (raw) {
+      try {
+        const t = JSON.parse(raw)?.currentType;
+        if (t === "global" || t === "country" || t === "friend" || t === "team") {
+          return t;
+        }
+      } catch {
+        void 0;
+      }
+    }
+    return "global";
+  }
+
+  /**
    * Fetch leaderboard scores for multiple mod combinations, merge, dedup, sort,
    * and return the top `limit` scores. Uses `GET /beatmaps/{beatmapId}/scores` on
    * osu.ppy.sh (site JSON), not `/api/v2`.
@@ -7776,6 +7849,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
    * @param {string} mode
    * @param {number} limit
    * @param {AbortSignal} signal
+   * @param {"global"|"country"|"friend"|"team"} leaderboardType
    * @returns {Promise<object[]>}
    */
   async function fetchAndMergeWildcardLeaderboards(
@@ -7784,12 +7858,19 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
     mode,
     limit,
     signal,
+    leaderboardType,
   ) {
+    const type =
+      leaderboardType === "country" ||
+      leaderboardType === "friend" ||
+      leaderboardType === "team"
+        ? leaderboardType
+        : "global";
     const fetches = modCombos.map((mods) =>
       OsuExpertPlus.api
         .getBeatmapScoresWebsite(beatmapId, {
           mode,
-          type: "global",
+          type,
           // Omitting mods[] returns every mod combination; NM is required for nomod.
           mods: mods.length ? mods : ["NM"],
           limit: EXTENDED_LB_LIMIT,
@@ -8084,12 +8165,15 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
 
     wildcardDebounceTimer = window.setTimeout(() => {
       wildcardDebounceTimer = 0;
+      const leaderboardType =
+        readBeatmapScoreboardLeaderboardType(scoreboardRoot);
       fetchAndMergeWildcardLeaderboards(
         beatmapId,
         combos,
         mode,
         EXTENDED_LB_LIMIT,
         signal,
+        leaderboardType,
       )
         .then((merged) => {
           if (signal.aborted) return;
@@ -9114,6 +9198,22 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
     };
     beatmapModGridLiveHandles.set(modsEl, handles);
 
+    const scoreboardRootForTabs = modsEl.closest(".beatmapset-scoreboard");
+    const onScoreboardTabClick = (e) => {
+      const tab = e.target?.closest?.(".page-tabs__tab");
+      if (!(tab instanceof HTMLElement)) return;
+      if (
+        !(scoreboardRootForTabs instanceof HTMLElement) ||
+        !scoreboardRootForTabs.contains(tab)
+      ) {
+        return;
+      }
+      if (getWildcardMods().length > 0) scheduleWildcardFetch(modsEl);
+    };
+    if (scoreboardRootForTabs instanceof HTMLElement) {
+      scoreboardRootForTabs.addEventListener("click", onScoreboardTabClick, true);
+    }
+
     handles.mo = new MutationObserver(scheduleApply);
     handles.mo.observe(modsEl, { childList: true });
     applyBeatmapModGrid(modsEl, el);
@@ -9179,6 +9279,13 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
         "oep-osu-api-credentials-changed",
         onCredsChange,
       );
+      if (scoreboardRootForTabs instanceof HTMLElement) {
+        scoreboardRootForTabs.removeEventListener(
+          "click",
+          onScoreboardTabClick,
+          true,
+        );
+      }
       clearWildcardState();
       if (modsEl && document.body.contains(modsEl)) {
         stopBeatmapScoreboardModGridLive(modsEl);
@@ -9248,48 +9355,168 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
   }
 
   /**
-   * Place the search bar directly after `.beatmapset-scoreboard__mods` so it
-   * appears right below the mod filter strip. Falls back to inserting before
-   * `__main` (or before the scoreboard's first child) when `__mods` is absent.
+   * Moves the tools row to the canonical spot (after mods when present, else
+   * the same fallbacks as legacy single-widget placement).
+   * @param {HTMLElement} scoreboardRoot
+   * @param {HTMLElement} row
+   */
+  function placeBeatmapScoreboardToolsRow(scoreboardRoot, row) {
+    const modsEl = scoreboardRoot.querySelector(".beatmapset-scoreboard__mods");
+    if (modsEl) {
+      if (row.previousElementSibling !== modsEl) {
+        modsEl.after(row);
+      }
+      return;
+    }
+    const main = scoreboardRoot.querySelector(".beatmapset-scoreboard__main");
+    const tableWrap = main?.querySelector(".beatmap-scoreboard-table");
+    if (tableWrap?.parentElement instanceof HTMLElement) {
+      const parent = tableWrap.parentElement;
+      if (row.parentElement !== parent || row.nextElementSibling !== tableWrap) {
+        parent.insertBefore(row, tableWrap);
+      }
+      return;
+    }
+    if (main) {
+      if (row.parentElement !== main || row !== main.firstElementChild) {
+        main.insertBefore(row, main.firstChild);
+      }
+      return;
+    }
+    if (row.parentElement !== scoreboardRoot || row !== scoreboardRoot.firstElementChild) {
+      scoreboardRoot.insertBefore(row, scoreboardRoot.firstChild);
+    }
+  }
+
+  /**
+   * @param {HTMLElement} scoreboardRoot
+   * @returns {HTMLElement}
+   */
+  function ensureBeatmapScoreboardToolsRow(scoreboardRoot) {
+    let row = scoreboardRoot.querySelector(`[${SCOREBOARD_TOOLS_ROW_ATTR}]`);
+    if (!(row instanceof HTMLElement)) {
+      row = /** @type {HTMLElement} */ (
+        el("div", {
+          class: "oep-scoreboard-tools-row",
+          [SCOREBOARD_TOOLS_ROW_ATTR]: "1",
+        })
+      );
+      placeBeatmapScoreboardToolsRow(scoreboardRoot, row);
+    } else {
+      placeBeatmapScoreboardToolsRow(scoreboardRoot, row);
+    }
+    return row;
+  }
+
+  /**
+   * @param {HTMLElement|null|undefined} scoreboardRoot
+   */
+  function removeEmptyBeatmapScoreboardToolsRows(scoreboardRoot) {
+    const roots =
+      scoreboardRoot instanceof HTMLElement
+        ? [scoreboardRoot]
+        : [...document.querySelectorAll(".beatmapset-scoreboard")];
+    for (const root of roots) {
+      root.querySelectorAll(`[${SCOREBOARD_TOOLS_ROW_ATTR}]`).forEach((n) => {
+        if (n instanceof HTMLElement && n.childElementCount === 0) {
+          n.remove();
+        }
+      });
+    }
+  }
+
+  /**
+   * Player lookup and rate filter share a flex row under `.beatmapset-scoreboard__mods`.
    * @param {HTMLElement} scoreboardRoot
    * @param {HTMLElement} wrap
    */
   function insertBeatmapScoreUserSearchBar(scoreboardRoot, wrap) {
-    const modsEl = scoreboardRoot.querySelector(".beatmapset-scoreboard__mods");
-    const rateBar = scoreboardRoot.querySelector(
-      `[${RATE_EDIT_FILTER_BAR_ATTR}]`,
-    );
-    if (modsEl) {
-      if (rateBar instanceof HTMLElement) rateBar.after(wrap);
-      else modsEl.after(wrap);
-      return;
+    const toolsRow = ensureBeatmapScoreboardToolsRow(scoreboardRoot);
+    const rate = toolsRow.querySelector(`[${RATE_EDIT_FILTER_BAR_ATTR}]`);
+    if (wrap.parentElement !== toolsRow) {
+      if (rate) toolsRow.insertBefore(wrap, rate);
+      else toolsRow.appendChild(wrap);
+    } else if (rate instanceof HTMLElement && rate.previousElementSibling !== wrap) {
+      toolsRow.insertBefore(wrap, rate);
     }
-    const main = scoreboardRoot.querySelector(".beatmapset-scoreboard__main");
-    if (main) {
-      main.insertBefore(wrap, main.firstChild);
-      return;
-    }
-    scoreboardRoot.insertBefore(wrap, scoreboardRoot.firstChild);
   }
 
   /**
-   * Sits directly under `.beatmapset-scoreboard__mods` so SPA remounts of the
-   * mod strip do not replace this node (sibling of React root, not inside it).
+   * Sits in the tools row (sibling of React mod root, not inside it).
    * @param {HTMLElement} scoreboardRoot
    * @param {HTMLElement} wrap
    */
   function insertBeatmapRateEditFilterBar(scoreboardRoot, wrap) {
+    const toolsRow = ensureBeatmapScoreboardToolsRow(scoreboardRoot);
+    if (wrap.parentElement !== toolsRow) {
+      toolsRow.appendChild(wrap);
+    } else {
+      toolsRow.appendChild(wrap);
+    }
+  }
+
+  /**
+   * @param {HTMLElement} scoreboardRoot
+   * @param {HTMLElement} wrap
+   * @returns {boolean}
+   */
+  function isBeatmapScoreboardToolsRowPlacedCorrectly(scoreboardRoot, row) {
+    if (!scoreboardRoot.contains(row)) return false;
     const modsEl = scoreboardRoot.querySelector(".beatmapset-scoreboard__mods");
     if (modsEl) {
-      modsEl.after(wrap);
-      return;
+      return row.previousElementSibling === modsEl;
     }
     const main = scoreboardRoot.querySelector(".beatmapset-scoreboard__main");
-    if (main) {
-      main.insertBefore(wrap, main.firstChild);
-      return;
+    const tableWrap = main?.querySelector(".beatmap-scoreboard-table");
+    const parent = tableWrap?.parentElement;
+    if (parent instanceof HTMLElement && row.parentElement === parent) {
+      return row.nextElementSibling === tableWrap;
     }
-    scoreboardRoot.insertBefore(wrap, scoreboardRoot.firstChild);
+    if (main instanceof HTMLElement && row.parentElement === main) {
+      return row === main.firstElementChild;
+    }
+    return (
+      row.parentElement === scoreboardRoot && row === scoreboardRoot.firstElementChild
+    );
+  }
+
+  /**
+   * @param {HTMLElement} scoreboardRoot
+   * @param {HTMLElement} wrap
+   * @returns {boolean}
+   */
+  function isPlayerLookupSearchBarPlacedCorrectly(scoreboardRoot, wrap) {
+    if (!scoreboardRoot.contains(wrap)) return false;
+    const toolsRow = wrap.parentElement;
+    if (
+      !(toolsRow instanceof HTMLElement) ||
+      !toolsRow.matches(`[${SCOREBOARD_TOOLS_ROW_ATTR}]`)
+    ) {
+      return false;
+    }
+    return isBeatmapScoreboardToolsRowPlacedCorrectly(scoreboardRoot, toolsRow);
+  }
+
+  /**
+   * @param {HTMLElement} scoreboardRoot
+   * @param {HTMLElement} wrap
+   * @returns {boolean}
+   */
+  function isRateEditFilterBarPlacedCorrectly(scoreboardRoot, wrap) {
+    if (!scoreboardRoot.contains(wrap)) return false;
+    const toolsRow = wrap.parentElement;
+    if (
+      !(toolsRow instanceof HTMLElement) ||
+      !toolsRow.matches(`[${SCOREBOARD_TOOLS_ROW_ATTR}]`)
+    ) {
+      return false;
+    }
+    if (!isBeatmapScoreboardToolsRowPlacedCorrectly(scoreboardRoot, toolsRow)) {
+      return false;
+    }
+    const searchWrap = toolsRow.querySelector(`[${SCOREBOARD_USER_SEARCH_ATTR}]`);
+    if (!(searchWrap instanceof HTMLElement)) return true;
+    return wrap.previousElementSibling === searchWrap;
   }
 
   /**
@@ -9462,7 +9689,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
    * @returns {() => void}
    */
   function startBeatmapScoreUserSearchManager(pathRe) {
-    const MARKER_ATTR = "data-oep-beatmap-user-search";
+    const MARKER_ATTR = SCOREBOARD_USER_SEARCH_ATTR;
     const NO_API_STATUS =
       "Add osu! API OAuth credentials in Expert+ settings to search players.";
     let debounceTimer = 0;
@@ -9478,6 +9705,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
         }
       });
       document.querySelectorAll(`[${MARKER_ATTR}]`).forEach((n) => n.remove());
+      removeEmptyBeatmapScoreboardToolsRows();
     };
 
     const syncPlayerLookupSearchBarApiState = (wrap) => {
@@ -9509,22 +9737,14 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
     };
 
     const ensureSearchBar = (root) => {
-      const modsEl = root.querySelector(".beatmapset-scoreboard__mods");
-      const existing = root.querySelector(`[${MARKER_ATTR}]`);
-      if (existing) {
-        const rateBar = root.querySelector(`[${RATE_EDIT_FILTER_BAR_ATTR}]`);
-        if (modsEl) {
-          if (rateBar instanceof HTMLElement) {
-            if (existing.previousElementSibling !== rateBar) {
-              rateBar.after(existing);
-            }
-          } else if (existing.previousElementSibling !== modsEl) {
-            modsEl.after(existing);
-          }
+      const existing =
+        root.querySelector(`[${MARKER_ATTR}]`) ||
+        document.querySelector(`[${MARKER_ATTR}]`);
+      if (existing instanceof HTMLElement) {
+        if (!isPlayerLookupSearchBarPlacedCorrectly(root, existing)) {
+          insertBeatmapScoreUserSearchBar(root, existing);
         }
-        syncPlayerLookupSearchBarApiState(
-          /** @type {HTMLElement} */ (existing),
-        );
+        syncPlayerLookupSearchBarApiState(existing);
         return;
       }
 
@@ -9722,6 +9942,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       document
         .querySelectorAll(`[${RATE_EDIT_FILTER_BAR_ATTR}]`)
         .forEach((n) => n.remove());
+      removeEmptyBeatmapScoreboardToolsRows();
     };
 
     const syncCheckbox = (wrap) => {
@@ -9756,7 +9977,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
           settings.set(SCOREBOARD_HIDE_CUSTOM_RATE_SCORES_ID, cb.checked);
         });
         insertBeatmapRateEditFilterBar(root, existing);
-      } else {
+      } else if (!isRateEditFilterBarPlacedCorrectly(root, existing)) {
         insertBeatmapRateEditFilterBar(root, existing);
       }
       syncCheckbox(existing);
@@ -11312,6 +11533,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
     const mo = Math.floor(day / 30);
     if (mo < 12) return `${mo}mo`;
     const y = Math.floor(day / 365);
+    if (y < 1) return `${mo}mo`;
     return `${y}y`;
   }
 
@@ -11701,32 +11923,24 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
     }
   }
 
-  /** Default when nothing stored yet: same as osu! (score, highest first). Persisted as `score:desc`. */
-  const BEATMAP_SCOREBOARD_SORT_DEFAULT_RAW = "score:desc";
+  /**
+   * Leaderboard sort for this tab only (not GM); default score descending.
+   * @type {{ key: string, dir: "asc"|"desc" }}
+   */
+  let beatmapScoreboardSortState = { key: "score", dir: "desc" };
 
   /**
-   * Reads last sort from GM (`beatmapDetail.scoreboardSortKey`). Defaults to score descending.
    * @returns {{ key: string, dir: "asc"|"desc" }}
    */
   function readBeatmapScoreboardSortState() {
-    const raw = String(
-      GM_getValue(
-        BEATMAP_SCOREBOARD_SORT_GM_KEY,
-        BEATMAP_SCOREBOARD_SORT_DEFAULT_RAW,
-      ) || BEATMAP_SCOREBOARD_SORT_DEFAULT_RAW,
+    const k = BEATMAP_SCOREBOARD_SORT_KEYS.includes(
+      beatmapScoreboardSortState.key,
     )
-      .trim()
-      .toLowerCase();
-    const colon = raw.indexOf(":");
-    if (colon >= 0) {
-      const k = raw.slice(0, colon);
-      const d = raw.slice(colon + 1);
-      const key = BEATMAP_SCOREBOARD_SORT_KEYS.includes(k) ? k : "score";
-      const dir = d === "asc" ? "asc" : "desc";
-      return { key, dir };
-    }
-    const key = BEATMAP_SCOREBOARD_SORT_KEYS.includes(raw) ? raw : "score";
-    return { key, dir: "desc" };
+      ? beatmapScoreboardSortState.key
+      : "score";
+    const d =
+      beatmapScoreboardSortState.dir === "asc" ? "asc" : "desc";
+    return { key: k, dir: d };
   }
 
   /**
@@ -11738,7 +11952,7 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       ? String(key).toLowerCase()
       : "score";
     const d = dir === "asc" ? "asc" : "desc";
-    GM_setValue(BEATMAP_SCOREBOARD_SORT_GM_KEY, `${k}:${d}`);
+    beatmapScoreboardSortState = { key: k, dir: d };
   }
 
   /**
@@ -12161,6 +12375,27 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
   }
 
   /**
+   * Wildcard / player-lookup merge keeps osu’s native rows in the tbody with
+   * `display: none`. Clearing the rate filter must not reveal them.
+   * @param {HTMLElement} row
+   * @param {HTMLElement} tbody
+   * @returns {boolean}
+   */
+  function beatmapScoreboardNativeRowSuppressedByMergedLeaderboard(row, tbody) {
+    if (
+      row.hasAttribute(WILDCARD_MERGED_ROW_ATTR) ||
+      row.hasAttribute(SCORE_USER_SEARCH_RESULT_ATTR)
+    ) {
+      return false;
+    }
+    return Boolean(
+      tbody.querySelector(
+        `tr[${WILDCARD_MERGED_ROW_ATTR}], tr[${SCORE_USER_SEARCH_RESULT_ATTR}]`,
+      ),
+    );
+  }
+
+  /**
    * When the setting is on, hides rows marked as custom-rate (`RATE_EDIT_ROW_ATTR`)
    * using inline `display` so sort/rank logic treats them like other hidden rows.
    * @param {HTMLElement|null|undefined} scoreboardRoot
@@ -12187,7 +12422,11 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
         }
       } else if (filtered) {
         row.removeAttribute(RATE_EDIT_ROW_HIDDEN_ATTR);
-        row.style.display = "";
+        if (beatmapScoreboardNativeRowSuppressedByMergedLeaderboard(row, tbody)) {
+          row.style.display = "none";
+        } else {
+          row.style.display = "";
+        }
       }
     }
   }
@@ -15994,8 +16233,8 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
     if (!pathRe.test(location.pathname)) return cleanup;
 
     bag.add(startBeatmapScoreboardSortControls(pathRe));
-    bag.add(startBeatmapScoreboardHideRateEditFilterBar(pathRe));
     bag.add(startBeatmapScoreUserSearchManager(pathRe));
+    bag.add(startBeatmapScoreboardHideRateEditFilterBar(pathRe));
     bag.add(startBeatmapScoreboardTableEnhancementsLive(pathRe));
     bag.add(startBeatmapDiscussionPreviewManager(pathRe));
     bag.add(startDiscussionTabLinkPatcher(beatmapsetId));
