@@ -185,7 +185,9 @@ OsuExpertPlus.api = (() => {
   /**
    * GET /beatmaps/{beatmap}/scores — top scores for a beatmap.
    * @param {string|number} beatmapId
-   * @param {{ mode?: string, mods?: string[], legacy_only?: number, type?: string, limit?: number }} [query]
+   * @param {{ mode?: string, mods?: string[], legacy_only?: number, type?: "global"|"country"|"friend"|"team", limit?: number }} [query]
+   *        `type` matches osu-web scoreboard tabs; `country` uses the logged-in
+   *        user’s country (same as the site). Requires `credentials: "include"`.
    * @returns {Promise<{ scores: object[] }>}
    */
   function getBeatmapScores(beatmapId, query) {
@@ -208,7 +210,9 @@ OsuExpertPlus.api = (() => {
    * path the webpage uses), not `/api/v2`. Richer / leaderboard-aligned payload
    * than the API route for some scores. `{beatmap}` is the difficulty id.
    * @param {string|number} beatmapId
-   * @param {{ mode?: string, mods?: string[], legacy_only?: number, type?: string, limit?: number }} [query]
+   * @param {{ mode?: string, mods?: string[], legacy_only?: number, type?: "global"|"country"|"friend"|"team", limit?: number }} [query]
+   *        `type` matches osu-web scoreboard tabs; `country` uses the logged-in
+   *        user’s country (same as the site). Requires `credentials: "include"`.
    * @returns {Promise<{ scores: object[] }>}
    */
   async function getBeatmapScoresWebsite(beatmapId, query) {

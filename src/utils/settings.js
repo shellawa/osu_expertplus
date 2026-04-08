@@ -330,8 +330,6 @@ OsuExpertPlus.settings = (() => {
       "beatmapDetail.scoreboardHideCustomRateScores",
     SCOREBOARD_PLAYER_LOOKUP: "beatmapDetail.scoreboardPlayerLookup",
     DIFF_NAME_BESIDE_PICKER: "beatmapDetail.diffNameBesidePicker",
-    /** GM string (not a panel toggle): last leaderboard sort `column:asc|desc`; default score:desc. */
-    BEATMAP_SCOREBOARD_SORT_KEY: "beatmapDetail.scoreboardSortKey",
   });
 
   return {

@@ -70,6 +70,11 @@ OsuExpertPlus.modIconsAsAcronyms = (() => {
     "BR",
     "BU",
   ]);
+  /**
+   * osu-web `mod.less`: `.mod-type(Conversion, @osu-colour-purple-1)` — blue-purple
+   * chip (e.g. Classic / CL). Not DifficultyIncrease/Reduction/Fun.
+   */
+  const MOD_ACRONYM_CONVERSION = new Set(["CL"]);
 
   const MOD_ICONS_ACRONYM_CSS = `
     .${MOD_ICONS_ACRONYM_CLASS}.mod__icon {
@@ -192,6 +197,7 @@ OsuExpertPlus.modIconsAsAcronyms = (() => {
     const u = String(acronym).trim().toUpperCase();
     if (MOD_ACRONYM_REDUCTION.has(u)) return "mod--type-DifficultyReduction";
     if (MOD_ACRONYM_INCREASE.has(u)) return "mod--type-DifficultyIncrease";
+    if (MOD_ACRONYM_CONVERSION.has(u)) return "mod--type-Conversion";
     return "mod--type-Fun";
   }
 
