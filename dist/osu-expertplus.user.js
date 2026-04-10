@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         osu! Expert+
 // @namespace    https://github.com/inix1257/osu_expertplus
-// @version      0.2.17
+// @version      0.2.18
 // @description  Adds extra QoL features to osu.ppy.sh
 // @author       inix1257
 // @homepageURL  https://github.com/inix1257/osu_expertplus
@@ -1054,7 +1054,7 @@ OsuExpertPlus.settings = (() => {
       id: "userProfile.bwsRanking",
       label: "Extra rankings in profile header",
       description:
-        "Shows extra rankings in the profile header next to global and country: BWS (badge-weighted), country PP rank, and ranked-score rank (api.kirino.sh). BWS uses keyword-filtered badge count and rank ^ (0.9937 ^ (badges ^ 2)); optional session-only badge input.",
+        "Shows extra rankings in the profile header next to global and country: BWS (badge-weighted) and ranked-score rank from api.kirino.sh. BWS uses keyword-filtered badge count and rank ^ (0.9937 ^ (badges ^ 2)); optional session-only badge input.",
       group: "User Profile",
       default: true,
     },
@@ -21098,7 +21098,6 @@ OsuExpertPlus.pages.userProfile = (() => {
   const bwsKirino = {
     key: "",
     status: /** @type {"idle"|"loading"|"ready"|"error"} */ ("idle"),
-    countryRank: /** @type {number|null} */ (null),
     scoreRank: /** @type {number|null} */ (null),
   };
 
@@ -21268,7 +21267,6 @@ OsuExpertPlus.pages.userProfile = (() => {
     if (bwsKirino.key !== key) {
       bwsKirino.key = key;
       bwsKirino.status = "idle";
-      bwsKirino.countryRank = null;
       bwsKirino.scoreRank = null;
     }
   }
@@ -21288,11 +21286,8 @@ OsuExpertPlus.pages.userProfile = (() => {
       .then((json) => {
         bwsKirinoResetIfNeeded();
         if (bwsKirino.key !== fetchKey) return;
-        const u = json?.user;
         const st = json?.stats;
-        const cr = u?.country_rank != null ? Number(u.country_rank) : NaN;
         const sr = st?.scoreRank != null ? Number(st.scoreRank) : NaN;
-        bwsKirino.countryRank = Number.isFinite(cr) && cr > 0 ? cr : null;
         bwsKirino.scoreRank = Number.isFinite(sr) && sr > 0 ? sr : null;
         bwsKirino.status = "ready";
         bwsRankingReschedule();
@@ -21301,7 +21296,6 @@ OsuExpertPlus.pages.userProfile = (() => {
         bwsKirinoResetIfNeeded();
         if (bwsKirino.key !== fetchKey) return;
         bwsKirino.status = "error";
-        bwsKirino.countryRank = null;
         bwsKirino.scoreRank = null;
         bwsRankingReschedule();
       });
@@ -21313,51 +21307,27 @@ OsuExpertPlus.pages.userProfile = (() => {
     return formatProfileRankSharpDisplay(x);
   }
 
-  function bwsProfileCountryCode() {
-    const d = parseProfileInitialData();
-    const c = d?.user?.country_code ?? d?.user?.country?.code ?? "";
-    return String(c).trim().toUpperCase();
-  }
-
-  /** @param {"performance"|"score"} sortType */
-  function bwsOfficialRankingsHref(sortType) {
+  function bwsOfficialScoreRankingsHref(scoreRank) {
     const mode = getCurrentMode() || "osu";
     const u = new URL(
-      `https://osu.ppy.sh/rankings/${encodeURIComponent(mode)}/${encodeURIComponent(sortType)}`,
+      `https://osu.ppy.sh/rankings/${encodeURIComponent(mode)}/score`,
     );
-    if (sortType === "performance") {
-      const code = bwsProfileCountryCode();
-      if (code) u.searchParams.set("country", code);
-    }
     if (mode === "mania") {
       const m = location.search.match(/[?&]variant=(4k|7k)/i);
       if (m) u.searchParams.set("variant", m[1].toLowerCase());
     }
+    const r = scoreRank != null ? Number(scoreRank) : NaN;
+    if (Number.isFinite(r) && r > 0) {
+      u.searchParams.set("page", String(Math.max(1, Math.ceil(r / 50))));
+    }
     return u.href;
-  }
-
-  function bwsKirinoCountryColumnState() {
-    bwsKirinoEnsureFetch();
-    const href = bwsOfficialRankingsHref("performance");
-    if (bwsKirino.status === "loading" || bwsKirino.status === "idle") {
-      return { display: "…", href };
-    }
-    if (bwsKirino.status === "error") {
-      const data = parseProfileInitialData();
-      const cr = Number(data?.user?.statistics?.country_rank);
-      const display =
-        Number.isFinite(cr) && cr > 0 ? bwsFormatRankSharpOrDash(cr) : "—";
-      return { display, href };
-    }
-    return {
-      display: bwsFormatRankSharpOrDash(bwsKirino.countryRank),
-      href,
-    };
   }
 
   function bwsKirinoScoreColumnState() {
     bwsKirinoEnsureFetch();
-    const href = bwsOfficialRankingsHref("score");
+    const href = bwsOfficialScoreRankingsHref(
+      bwsKirino.status === "ready" ? bwsKirino.scoreRank : null,
+    );
     if (bwsKirino.status === "loading" || bwsKirino.status === "idle") {
       return { display: "…", href };
     }
@@ -21370,17 +21340,17 @@ OsuExpertPlus.pages.userProfile = (() => {
     };
   }
 
-  function bwsBuildKirinoRankColumn(which, label, display, href) {
+  function bwsBuildKirinoScoreRankColumn(display, href) {
     return el(
       "div",
       {
         class: "value-display value-display--rank",
-        [BWS_KIRINO_COL_ATTR]: which,
+        [BWS_KIRINO_COL_ATTR]: "score",
       },
       el(
         "div",
         { class: "value-display__label u-ellipsis-overflow" },
-        label,
+        "Score Ranking",
       ),
       el(
         "div",
@@ -21397,12 +21367,9 @@ OsuExpertPlus.pages.userProfile = (() => {
     );
   }
 
-  function bwsSyncKirinoRankColumn(valuesRow, which) {
-    const row = valuesRow.querySelector(`[${BWS_KIRINO_COL_ATTR}="${which}"]`);
-    const state =
-      which === "country"
-        ? bwsKirinoCountryColumnState()
-        : bwsKirinoScoreColumnState();
+  function bwsSyncKirinoScoreRankColumn(valuesRow) {
+    const row = valuesRow.querySelector(`[${BWS_KIRINO_COL_ATTR}="score"]`);
+    const state = bwsKirinoScoreColumnState();
     if (!(row instanceof HTMLElement)) return;
     const valHost = row.querySelector(".value-display__value");
     let link = row.querySelector("a.oep-bws-kirino-rank-link");
@@ -21418,32 +21385,13 @@ OsuExpertPlus.pages.userProfile = (() => {
     link.removeAttribute("title");
   }
 
-  function bwsEnsureKirinoRankColumns(valuesRow, bwsRowEl) {
-    let countryRow = valuesRow.querySelector(
-      `[${BWS_KIRINO_COL_ATTR}="country"]`,
-    );
-    if (!(countryRow instanceof HTMLElement)) {
-      const st = bwsKirinoCountryColumnState();
-      countryRow = bwsBuildKirinoRankColumn(
-        "country",
-        "Country Ranking",
-        st.display,
-        st.href,
-      );
-      bwsRowEl.insertAdjacentElement("afterend", countryRow);
-    }
-    const anchorAfterCountry =
-      countryRow instanceof HTMLElement ? countryRow : bwsRowEl;
+  function bwsEnsureKirinoScoreRankColumn(valuesRow, bwsRowEl) {
+    valuesRow.querySelector(`[${BWS_KIRINO_COL_ATTR}="country"]`)?.remove();
     let scoreRow = valuesRow.querySelector(`[${BWS_KIRINO_COL_ATTR}="score"]`);
     if (!(scoreRow instanceof HTMLElement)) {
       const st = bwsKirinoScoreColumnState();
-      scoreRow = bwsBuildKirinoRankColumn(
-        "score",
-        "Score Ranking",
-        st.display,
-        st.href,
-      );
-      anchorAfterCountry.insertAdjacentElement("afterend", scoreRow);
+      scoreRow = bwsBuildKirinoScoreRankColumn(st.display, st.href);
+      bwsRowEl.insertAdjacentElement("afterend", scoreRow);
     }
   }
 
@@ -21593,9 +21541,8 @@ OsuExpertPlus.pages.userProfile = (() => {
         wireBwsAdjustInput(inp);
       }
     }
-    bwsEnsureKirinoRankColumns(valuesRow, bwsRow);
-    bwsSyncKirinoRankColumn(valuesRow, "country");
-    bwsSyncKirinoRankColumn(valuesRow, "score");
+    bwsEnsureKirinoScoreRankColumn(valuesRow, bwsRow);
+    bwsSyncKirinoScoreRankColumn(valuesRow);
   }
 
   function startBwsRankingManager() {
@@ -21639,7 +21586,6 @@ OsuExpertPlus.pages.userProfile = (() => {
       bwsRankingReschedule = () => {};
       bwsKirino.key = "";
       bwsKirino.status = "idle";
-      bwsKirino.countryRank = null;
       bwsKirino.scoreRank = null;
       clearTimeout(debounceTimer);
       obs.disconnect();
