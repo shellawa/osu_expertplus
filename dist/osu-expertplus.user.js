@@ -1052,9 +1052,9 @@ OsuExpertPlus.settings = (() => {
     },
     {
       id: "userProfile.bwsRanking",
-      label: "BWS ranking in profile header",
+      label: "Extra rankings in profile header",
       description:
-        "Places BWS (badge-weighted) ranking beside global and country ranking, then two more columns (country PP rank and ranked-score rank from api.kirino.sh). Keyword-filtered badge count, rank ^ (0.9937 ^ (badges ^ 2)); optional session-only badge input.",
+        "Shows extra rankings in the profile header next to global and country: BWS (badge-weighted), country PP rank, and ranked-score rank (api.kirino.sh). BWS uses keyword-filtered badge count and rank ^ (0.9937 ^ (badges ^ 2)); optional session-only badge input.",
       group: "User Profile",
       default: true,
     },
@@ -1086,7 +1086,7 @@ OsuExpertPlus.settings = (() => {
       id: "beatmapDetail.metadataDescriptionModalButtons",
       label: "Full description & metadata buttons",
       description:
-        "On beatmapset pages, adds the \"Show metadata\" button under the artist and the \"Full description\" button in the info panel (each opens a modal).",
+        'On beatmapset pages, adds the "Show metadata" button under the artist and the "Full description" button in the info panel (each opens a modal).',
       group: "Beatmap Detail",
       default: true,
     },
