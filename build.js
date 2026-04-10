@@ -42,7 +42,7 @@ const METADATA = `\
 // ==UserScript==
 // @name         osu! Expert+
 // @namespace    https://github.com/inix1257/osu_expertplus
-// @version      0.2.16
+// @version      0.2.17
 // @description  Adds extra QoL features to osu.ppy.sh
 // @author       inix1257
 // @homepageURL  https://github.com/inix1257/osu_expertplus
@@ -52,6 +52,7 @@ const METADATA = `\
 // @match        https://osu.ppy.sh/*
 // @connect      omdb.nyahh.net
 // @connect      assets.ppy.sh
+// @connect      api.kirino.sh
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
