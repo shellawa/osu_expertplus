@@ -80,7 +80,7 @@ OsuExpertPlus.settings = (() => {
       id: "userProfile.bwsRanking",
       label: "Extra rankings in profile header",
       description:
-        "Shows extra rankings in the profile header next to global and country: BWS (badge-weighted), country PP rank, and ranked-score rank (api.kirino.sh). BWS uses keyword-filtered badge count and rank ^ (0.9937 ^ (badges ^ 2)); optional session-only badge input.",
+        "Shows extra rankings in the profile header next to global and country: BWS (badge-weighted) and ranked-score rank from api.kirino.sh. BWS uses keyword-filtered badge count and rank ^ (0.9937 ^ (badges ^ 2)); optional session-only badge input.",
       group: "User Profile",
       default: true,
     },
