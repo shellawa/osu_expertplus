@@ -169,18 +169,28 @@ OsuExpertPlus.dom = (() => {
     let s = String(str).trim();
     // Strip whitespace-like thousand separators (thin/non-breaking/regular space)
     s = s.replace(/[\s\u00A0\u202F\u2009]/g, "");
-
-    let decimalSeparator = ".";
+    const locale =
+      typeof window.currentLocale === "string"
+        ? window.currentLocale
+        : document.documentElement.lang || undefined;
+    let decimalSep = ".";
     try {
-      decimalSeparator = new Intl.NumberFormat(
-        window.currentLocale || document.documentElement.lang || undefined
-      )
-        .format(1.1).replace(/\d/g, "");
-    } catch (e) {
-      // Defaulting to "."
+      decimalSep = new Intl.NumberFormat(locale)
+        .format(1.1)
+        .replace(/\d/g, "")
+        .trim();
+    } catch (_) {}
+    const dec = decimalSep.replace(/[\s\u00A0\u202F\u2009]/g, "");
+    if (dec === "." && /^\d{1,3}(,\d{3})+$/.test(s)) {
+      return parseFloat(s.replace(/,/g, ""));
+    }
+    if (dec === "," && /^\d{1,3}(\.\d{3})+$/.test(s)) {
+      return parseFloat(s.replace(/\./g, ""));
     }
 
-    if (decimalSeparator === ",") {
+    const lastComma = s.lastIndexOf(",");
+    const lastPeriod = s.lastIndexOf(".");
+    if (lastComma > lastPeriod) {
       s = s.replace(/\./g, "").replace(",", ".");
     } else {
       s = s.replace(/,/g, "");

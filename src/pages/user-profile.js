@@ -48,6 +48,8 @@ OsuExpertPlus.pages.userProfile = (() => {
   const SCORE_HIT_STATISTICS_ID = IDS.SCORE_HIT_STATISTICS;
   const SCORE_PERIOD_HIGHLIGHT_ID = IDS.SCORE_PERIOD_HIGHLIGHT;
   const RECENT_SCORES_SHOW_FAILS_ID = IDS.RECENT_SCORES_SHOW_FAILS;
+  const PROFILE_SECTION_COLLAPSE_REMOVE_FROM_PAGE_ID =
+    IDS.PROFILE_SECTION_COLLAPSE_REMOVE_FROM_PAGE;
   const PP_DECIMALS_ATTR = "data-oep-pp-original";
 
   function applyPpDecimals(listEl) {
@@ -1508,28 +1510,16 @@ OsuExpertPlus.pages.userProfile = (() => {
 
     await waitForStaleElementToLeave(PLAY_DETAIL_LIST_STALE_SEL);
 
-    try {
-      // Wait specifically for top_ranks (Ranks section) to have play-detail rows.
-      // Using `.play-detail-list .play-detail` here would resolve on "Most Watched
-      // Replays" if that section renders first, causing initScoreFeatures to run
-      // before top_ranks is in the DOM and return early with no sections.
-      await waitForElement(
-        '[data-page-id="top_ranks"] .play-detail-list .play-detail',
-        15000,
-      );
-    } catch {
-      return () => {};
-    }
+    await waitForElement(
+      '[data-page-id="top_ranks"] .play-detail-list',
+      15000,
+    ).catch(() => {});
 
     const scoreSections = Array.from(
       document.querySelectorAll(".play-detail-list"),
     )
       .map((listEl) => ({ listEl, type: _getSectionType(listEl) }))
       .filter((s) => SCORE_SECTION_TYPES.includes(s.type));
-
-    if (!scoreSections.length) {
-      return () => {};
-    }
 
     scoreSections.forEach(({ listEl }) =>
       listEl.setAttribute(PLAY_DETAIL_LIST_PROCESSED_ATTR, "1"),
@@ -1613,9 +1603,10 @@ OsuExpertPlus.pages.userProfile = (() => {
       }
     }
 
-    scoreSections.forEach((section) => {
+    function mountScoreListObserver(section) {
       const { listEl, type } = section;
       let sectionObsBusy = false;
+      let statsFetchPending = false;
 
       const obs = new MutationObserver((mutations) => {
         if (sectionObsBusy) return;
@@ -1674,21 +1665,29 @@ OsuExpertPlus.pages.userProfile = (() => {
           }
 
           const allEls = Array.from(listEl.querySelectorAll(".play-detail"));
-          if (
-            settings.isEnabled(SCORE_HIT_STATISTICS_ID) &&
-            scoresMap.has(type)
-          ) {
-            const scores = scoresMap.get(type);
-            allEls.forEach((rowEl, i) => {
-              const needsReinjection =
-                !rowEl.hasAttribute(SCORE_STATS_ATTR) ||
-                !rowEl.querySelector(".oep-score-stats");
-              if (!needsReinjection) return;
-              rowEl.removeAttribute(SCORE_STATS_ATTR);
-              const score = scores[i];
-              if (!score) return;
-              injectStatsRow(rowEl, score);
-            });
+          if (settings.isEnabled(SCORE_HIT_STATISTICS_ID)) {
+            if (!scoresMap.has(type) && !statsFetchPending) {
+              // Rows appeared before the initial fetch completed (e.g. list was
+              // adopted while empty). Fetch now, then re-apply.
+              statsFetchPending = true;
+              _loadAndApplyStats(section).then(() => {
+                statsFetchPending = false;
+                if (settings.isEnabled(SCORE_PP_DECIMALS_ID))
+                  applyPpDecimals(listEl);
+              });
+            } else if (scoresMap.has(type)) {
+              const scores = scoresMap.get(type);
+              allEls.forEach((rowEl, i) => {
+                const needsReinjection =
+                  !rowEl.hasAttribute(SCORE_STATS_ATTR) ||
+                  !rowEl.querySelector(".oep-score-stats");
+                if (!needsReinjection) return;
+                rowEl.removeAttribute(SCORE_STATS_ATTR);
+                const score = scores[i];
+                if (!score) return;
+                injectStatsRow(rowEl, score);
+              });
+            }
           }
 
           if (type === "most_watched" && scoresMap.has(type)) {
@@ -1728,7 +1727,85 @@ OsuExpertPlus.pages.userProfile = (() => {
         attributeFilter: ["class"],
       });
       cleanupFns.push(() => classObs.disconnect());
+    }
+
+    scoreSections.forEach(mountScoreListObserver);
+
+    /**
+     * Apply all score features to a .play-detail-list that appeared after the
+     * initial `initScoreFeatures` snapshot (e.g. Historical tab opened for the
+     * first time, or a score section that was lazy-rendered by osu! later).
+     * @param {HTMLElement} listEl
+     */
+    async function adoptLateSection(listEl) {
+      const type = _getSectionType(listEl);
+      if (!SCORE_SECTION_TYPES.includes(type)) return;
+      // Mark immediately to prevent a second adoption while we're async.
+      listEl.setAttribute(PLAY_DETAIL_LIST_PROCESSED_ATTR, "1");
+
+      const section = { listEl, type };
+      scoreSections.push(section);
+
+      if (settings.isEnabled(SCORE_HIT_STATISTICS_ID)) {
+        setScoreListLayoutClass([section], true);
+      }
+      syncScoreListPpDecimalsWidthClass(listEl);
+
+      // Mount the per-list observer first so mutations that bring in the first
+      // rows are always caught, even if the list is empty right now.
+      mountScoreListObserver(section);
+
+      const hasRows = listEl.querySelector(".play-detail") != null;
+
+      if (hasRows) {
+        if (settings.isEnabled(SCORE_PP_DECIMALS_ID)) applyPpDecimals(listEl);
+        applyHideWeightedPp(listEl);
+        if (
+          settings.isEnabled(SCORE_PLACE_NUMBER_ID) &&
+          type === SCORE_PLACE_SECTION_TYPE
+        ) {
+          applyPlaceNumbers(listEl);
+          if (scoreSections.some((s) => s.type === SCORE_PLACE_SECTION_TYPE)) {
+            scorePlaceNumberStyle.inject();
+          }
+        }
+
+        if (type === "most_watched") {
+          mostWatchedSections.push(section);
+          if (!scoresMap.has("most_watched")) {
+            scoresMap.set(
+              "most_watched",
+              await fetchMostWatchedScores(userId, mode),
+            );
+          }
+          applyMostWatchedPp(listEl, scoresMap.get("most_watched"));
+          if (settings.isEnabled(SCORE_PP_DECIMALS_ID)) applyPpDecimals(listEl);
+        }
+
+        if (settings.isEnabled(SCORE_HIT_STATISTICS_ID)) {
+          await _loadAndApplyStats(section);
+          if (settings.isEnabled(SCORE_PP_DECIMALS_ID)) applyPpDecimals(listEl);
+        }
+      } else if (type === "most_watched") {
+        mostWatchedSections.push(section);
+      }
+    }
+
+    const lateSectionObs = new MutationObserver(() => {
+      document
+        .querySelectorAll(
+          `.play-detail-list:not([${PLAY_DETAIL_LIST_PROCESSED_ATTR}])`,
+        )
+        .forEach((listEl) => {
+          if (!(listEl instanceof HTMLElement)) return;
+          adoptLateSection(listEl);
+        });
     });
+    lateSectionObs.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+    cleanupFns.push(() => lateSectionObs.disconnect());
 
     cleanupFns.push(
       settings.onChange(SCORE_PP_DECIMALS_ID, (enabled) => {
@@ -1833,6 +1910,316 @@ OsuExpertPlus.pages.userProfile = (() => {
     if (!m) return null;
     const n = Number(m[1]);
     return Number.isFinite(n) ? String(n) : null;
+  }
+
+  const PROFILE_AVATAR_OPEN_ATTR = "data-oep-profile-avatar-open";
+  const PROFILE_BANNER_OPEN_ATTR = "data-oep-profile-banner-open";
+  const PROFILE_MEDIA_OPEN_BTN_CLASS = "oep-profile-media-open";
+  const PROFILE_MEDIA_OPEN_AVATAR_CLASS = "oep-profile-media-open--avatar";
+  const PROFILE_MEDIA_OPEN_BANNER_CLASS = "oep-profile-media-open--banner";
+  const PROFILE_MEDIA_OPEN_HOST_CLASS = "oep-profile-media-open-host";
+  const PROFILE_MEDIA_OPEN_STYLE_ID = "osu-expertplus-profile-media-open";
+
+  const profileMediaOpenStyle = manageStyle(
+    PROFILE_MEDIA_OPEN_STYLE_ID,
+    `
+    .profile-info.${PROFILE_MEDIA_OPEN_HOST_CLASS},
+    .${PROFILE_MEDIA_OPEN_HOST_CLASS} {
+      position: relative;
+    }
+    .${PROFILE_MEDIA_OPEN_BTN_CLASS} {
+      position: absolute;
+      z-index: 7;
+      margin: 0;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.85em;
+      height: 1.85em;
+      min-width: 1.85em;
+      min-height: 1.85em;
+      font-size: 11px;
+      line-height: 1;
+      color: hsl(var(--hsl-l1));
+      cursor: pointer;
+      appearance: none;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 5px;
+      background: rgba(0, 0, 0, 0.55);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 140ms ease, background-color 140ms ease,
+        border-color 140ms ease;
+    }
+    .${PROFILE_MEDIA_OPEN_BTN_CLASS} .fas {
+      pointer-events: none;
+    }
+    .${PROFILE_MEDIA_OPEN_HOST_CLASS}:has(.profile-info__avatar:hover)
+      .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_AVATAR_CLASS},
+    .${PROFILE_MEDIA_OPEN_HOST_CLASS}:has(
+        .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_AVATAR_CLASS}:hover
+      )
+      .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_AVATAR_CLASS},
+    .${PROFILE_MEDIA_OPEN_HOST_CLASS}:has(
+        .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_AVATAR_CLASS}:focus-visible
+      )
+      .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_AVATAR_CLASS} {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .${PROFILE_MEDIA_OPEN_HOST_CLASS}:has(.profile-info__bg:hover)
+      .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_BANNER_CLASS},
+    .${PROFILE_MEDIA_OPEN_HOST_CLASS}:has(
+        .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_BANNER_CLASS}:hover
+      )
+      .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_BANNER_CLASS},
+    .${PROFILE_MEDIA_OPEN_HOST_CLASS}:has(
+        .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_BANNER_CLASS}:focus-visible
+      )
+      .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_BANNER_CLASS} {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .${PROFILE_MEDIA_OPEN_BTN_CLASS}:hover {
+      background: rgba(0, 0, 0, 0.78);
+      border-color: rgba(255, 255, 255, 0.22);
+    }
+    .${PROFILE_MEDIA_OPEN_BTN_CLASS}:focus-visible {
+      outline: 2px solid hsl(var(--hsl-b1));
+      outline-offset: 2px;
+    }
+  `,
+  );
+
+  /** @type {WeakMap<HTMLElement, number>} */
+  const profileMediaOpenHostCounts = new WeakMap();
+
+  function acquireProfileMediaOpenHost(profileInfo) {
+    const n = (profileMediaOpenHostCounts.get(profileInfo) || 0) + 1;
+    profileMediaOpenHostCounts.set(profileInfo, n);
+    profileInfo.classList.add(PROFILE_MEDIA_OPEN_HOST_CLASS);
+  }
+
+  function releaseProfileMediaOpenHost(profileInfo) {
+    const prev = profileMediaOpenHostCounts.get(profileInfo);
+    if (prev == null) return;
+    const n = prev - 1;
+    if (n <= 0) {
+      profileMediaOpenHostCounts.delete(profileInfo);
+      profileInfo.classList.remove(PROFILE_MEDIA_OPEN_HOST_CLASS);
+    } else {
+      profileMediaOpenHostCounts.set(profileInfo, n);
+    }
+  }
+
+  /**
+   * @param {HTMLElement} avatarHost
+   * @returns {string}
+   */
+  function resolveProfileAvatarImageHref(avatarHost) {
+    const data = parseProfileInitialData();
+    const fromData = data?.user?.avatar_url;
+    if (typeof fromData === "string" && fromData.trim()) return fromData.trim();
+    const img = avatarHost.querySelector("img[src]");
+    if (img instanceof HTMLImageElement && img.src) return img.src;
+    const withBg = avatarHost.querySelector("[style*='background-image']");
+    if (withBg instanceof HTMLElement) {
+      const styleAttr = withBg.getAttribute("style") || "";
+      const m = styleAttr.match(/url\(\s*["']?([^"')]+)/i);
+      if (m && m[1]) return m[1].trim();
+    }
+    const uid = getProfileUserId();
+    return uid ? `https://a.ppy.sh/${uid}` : "";
+  }
+
+  /**
+   * @param {HTMLElement} bgHost
+   * @returns {string}
+   */
+  function resolveProfileBannerImageHref(bgHost) {
+    const data = parseProfileInitialData();
+    const cover = data?.user?.cover;
+    if (cover && typeof cover === "object") {
+      for (const k of ["custom_url", "url"]) {
+        const u = cover[k];
+        if (typeof u === "string" && u.trim()) return u.trim();
+      }
+    }
+    const flat = data?.user?.cover_url;
+    if (typeof flat === "string" && flat.trim()) return flat.trim();
+
+    const styleAttr = bgHost.getAttribute("style") || "";
+    let m = styleAttr.match(/url\(\s*["']?([^"')]+)/i);
+    if (m && m[1]) return m[1].trim();
+    for (const inner of bgHost.querySelectorAll(
+      "[style*='background-image']",
+    )) {
+      if (!(inner instanceof HTMLElement)) continue;
+      const s = inner.getAttribute("style") || "";
+      m = s.match(/url\(\s*["']?([^"')]+)/i);
+      if (m && m[1]) return m[1].trim();
+    }
+    const img = bgHost.querySelector("img[src]");
+    if (img instanceof HTMLImageElement && img.src) return img.src;
+    return "";
+  }
+
+  /**
+   * @param {{
+   *   mediaHost: HTMLElement,
+   *   markerAttr: string,
+   *   resolveHref: (host: HTMLElement) => string,
+   *   ariaLabel: string,
+   * }} opts
+   * @returns {null | (() => void)}
+   */
+  function bindProfileMediaOpenButton(opts) {
+    const { mediaHost, markerAttr, resolveHref, ariaLabel } = opts;
+    if (!(mediaHost instanceof HTMLElement)) return null;
+    if (mediaHost.hasAttribute(markerAttr)) return null;
+    const href = resolveHref(mediaHost);
+    if (!href) return null;
+    mediaHost.setAttribute(markerAttr, "1");
+
+    const profileInfoEl = mediaHost.closest(".profile-info");
+    const profileInfo =
+      profileInfoEl instanceof HTMLElement
+        ? profileInfoEl
+        : mediaHost.parentElement;
+    if (!(profileInfo instanceof HTMLElement)) {
+      mediaHost.removeAttribute(markerAttr);
+      return null;
+    }
+
+    acquireProfileMediaOpenHost(profileInfo);
+
+    const variantClass =
+      markerAttr === PROFILE_AVATAR_OPEN_ATTR
+        ? PROFILE_MEDIA_OPEN_AVATAR_CLASS
+        : PROFILE_MEDIA_OPEN_BANNER_CLASS;
+
+    const btn = el(
+      "button",
+      {
+        type: "button",
+        class: `${PROFILE_MEDIA_OPEN_BTN_CLASS} ${variantClass}`,
+        "aria-label": ariaLabel,
+        onclick: (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          window.open(href, "_blank", "noopener,noreferrer");
+        },
+      },
+      el("i", {
+        class: "fas fa-external-link-alt",
+        "aria-hidden": "true",
+      }),
+    );
+
+    function syncOpenBtnLayout() {
+      if (!btn.isConnected || !mediaHost.isConnected) return;
+      const ar = mediaHost.getBoundingClientRect();
+      const pr = profileInfo.getBoundingClientRect();
+      const top = ar.top - pr.top + profileInfo.scrollTop;
+      const left = ar.left - pr.left + profileInfo.scrollLeft;
+      btn.style.top = `${Math.round(top + 2)}px`;
+      btn.style.left = `${Math.round(left + ar.width - 2)}px`;
+      btn.style.transform = "translate(-100%, 0)";
+    }
+
+    profileInfo.appendChild(btn);
+    syncOpenBtnLayout();
+
+    const ro =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(syncOpenBtnLayout)
+        : null;
+    ro?.observe(mediaHost);
+    ro?.observe(profileInfo);
+    window.addEventListener("scroll", syncOpenBtnLayout, true);
+    window.addEventListener("resize", syncOpenBtnLayout);
+
+    return () => {
+      window.removeEventListener("scroll", syncOpenBtnLayout, true);
+      window.removeEventListener("resize", syncOpenBtnLayout);
+      ro?.disconnect();
+      btn.remove();
+      releaseProfileMediaOpenHost(profileInfo);
+      mediaHost.removeAttribute(markerAttr);
+    };
+  }
+
+  /** Hover controls on profile avatar and banner to open full media in a new tab. */
+  function startProfileMediaOpenPictureManager() {
+    profileMediaOpenStyle.inject();
+
+    let disposeAvatar = /** @type {null | (() => void)} */ (null);
+    let disposeBanner = /** @type {null | (() => void)} */ (null);
+    const ac = new AbortController();
+
+    function scanProfileMediaOpen() {
+      if (ac.signal.aborted) return;
+      const av = document.querySelector(".profile-info__avatar");
+      if (
+        av instanceof HTMLElement &&
+        !av.hasAttribute(PROFILE_AVATAR_OPEN_ATTR)
+      ) {
+        disposeAvatar?.();
+        disposeAvatar =
+          bindProfileMediaOpenButton({
+            mediaHost: av,
+            markerAttr: PROFILE_AVATAR_OPEN_ATTR,
+            resolveHref: resolveProfileAvatarImageHref,
+            ariaLabel: "Open profile picture",
+          }) || null;
+      }
+      const bg = document.querySelector(".profile-info__bg");
+      if (
+        bg instanceof HTMLElement &&
+        !bg.hasAttribute(PROFILE_BANNER_OPEN_ATTR)
+      ) {
+        disposeBanner?.();
+        disposeBanner =
+          bindProfileMediaOpenButton({
+            mediaHost: bg,
+            markerAttr: PROFILE_BANNER_OPEN_ATTR,
+            resolveHref: resolveProfileBannerImageHref,
+            ariaLabel: "Open profile banner",
+          }) || null;
+      }
+    }
+
+    Promise.allSettled([
+      waitForElement(".profile-info__avatar", 15000),
+      waitForElement(".profile-info__bg", 15000),
+    ]).then(() => {
+      if (!ac.signal.aborted) scanProfileMediaOpen();
+    });
+
+    const obs = new MutationObserver(scanProfileMediaOpen);
+    obs.observe(document.documentElement, { childList: true, subtree: true });
+
+    return () => {
+      ac.abort();
+      obs.disconnect();
+      disposeAvatar?.();
+      disposeBanner?.();
+      document
+        .querySelectorAll(`.${PROFILE_MEDIA_OPEN_BTN_CLASS}`)
+        .forEach((b) => b.remove());
+      document
+        .querySelectorAll(`[${PROFILE_AVATAR_OPEN_ATTR}]`)
+        .forEach((el) => el.removeAttribute(PROFILE_AVATAR_OPEN_ATTR));
+      document
+        .querySelectorAll(`[${PROFILE_BANNER_OPEN_ATTR}]`)
+        .forEach((el) => el.removeAttribute(PROFILE_BANNER_OPEN_ATTR));
+      document
+        .querySelectorAll(`.${PROFILE_MEDIA_OPEN_HOST_CLASS}`)
+        .forEach((el) => el.classList.remove(PROFILE_MEDIA_OPEN_HOST_CLASS));
+      profileMediaOpenStyle.remove();
+    };
   }
 
   const RECENT_FAILS_WRAP_CLASS = "oep-recent-scores-with-fails";
@@ -3833,9 +4220,7 @@ OsuExpertPlus.pages.userProfile = (() => {
     const s = String(htmlOrText);
     const tmp = document.createElement("div");
     tmp.innerHTML = s;
-    return (tmp.textContent || tmp.innerText || "")
-      .replace(/\s+/g, " ")
-      .trim();
+    return (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
   }
 
   function bwsBadgeDescriptionText(badgeEl) {
@@ -3885,8 +4270,7 @@ OsuExpertPlus.pages.userProfile = (() => {
   function parseProfileGlobalRankForBws() {
     const data = parseProfileInitialData();
     const mode = getCurrentMode();
-    const fromRulesets =
-      data?.user?.statistics_rulesets?.[mode]?.global_rank;
+    const fromRulesets = data?.user?.statistics_rulesets?.[mode]?.global_rank;
     if (fromRulesets != null) {
       const n = Number(fromRulesets);
       if (Number.isFinite(n) && n > 0) return n;
@@ -4071,7 +4455,8 @@ OsuExpertPlus.pages.userProfile = (() => {
     const exponent = Math.pow(0.9937, count * count);
     const bwsVal = computeBwsRankValue(globalRank, count);
     const expStr = exponent.toFixed(4);
-    const resultStr = bwsVal != null ? Math.round(bwsVal).toLocaleString() : "?";
+    const resultStr =
+      bwsVal != null ? Math.round(bwsVal).toLocaleString() : "?";
     return (
       `rank ^ (0.9937 ^ (badges²))` +
       ` = ${globalRank.toLocaleString()} ^ (0.9937 ^ ${count}²)` +
@@ -4092,9 +4477,7 @@ OsuExpertPlus.pages.userProfile = (() => {
     const globalRank = parseProfileGlobalRankForBws();
     if (globalRank == null) return;
     const eligible = analyzeBadgesForBws().eligible;
-    const rv = inp
-      .closest(`[${BWS_ATTR}="1"]`)
-      ?.querySelector(".rank-value");
+    const rv = inp.closest(`[${BWS_ATTR}="1"]`)?.querySelector(".rank-value");
     if (!(rv instanceof HTMLElement)) return;
     const count = bwsEffectiveBadgeCountFromInput(inp, eligible);
     const bwsVal = computeBwsRankValue(globalRank, count);
@@ -7533,16 +7916,14 @@ OsuExpertPlus.pages.userProfile = (() => {
   const SECTION_PAGE_TITLE_COLLAPSED_SUFFIX_CLASS =
     "oep-profile-section-page-title__collapsed-suffix";
   const SECTION_COLLAPSE_STYLE_ID = "osu-expertplus-profile-section-collapse";
+  const SECTION_COLLAPSE_HARD_MODE_CLASS = "oep-profile-section-collapse--hard";
 
   const SECTION_COLLAPSE_CSS = `
     .${SECTION_COLLAPSE_BODY_HIDDEN_CLASS} {
       display: none !important;
     }
-    div.js-sortable--page.${SECTION_COLLAPSE_PAGE_CLASS}
-      > *:not(h2.title.title--page-extra):not(h3.title.title--page-extra-small):not(div.u-relative:has(> h2.title.title--page-extra)) {
-      display: none !important;
-    }
-    div.js-sortable--page.${SECTION_COLLAPSE_PAGE_CLASS}
+    html.${SECTION_COLLAPSE_HARD_MODE_CLASS}
+      div.js-sortable--page.${SECTION_COLLAPSE_PAGE_CLASS}
       > div.u-relative
       > *:not(h2.title.title--page-extra):not(h3.title.title--page-extra-small) {
       display: none !important;
@@ -7729,14 +8110,7 @@ OsuExpertPlus.pages.userProfile = (() => {
   }
 
   /**
-   * Hide non-heading children so in-page section titles stay visible.
-   * Follows single-child wrappers briefly (some layouts nest one div).
-   * @param {HTMLElement} pageEl
-   * @param {number} depth
-   * @returns {boolean} true when headings were found and body nodes hidden
-   */
-  /**
-   * "(Collapsed)" is a real node so `h2::after` stays the hover overlay (same as expanded).
+   * "(collapsed)" is a real node so `h2::after` stays the hover overlay (same as expanded).
    * @param {HTMLElement} pageEl
    * @param {boolean} isCollapsed
    */
@@ -7753,15 +8127,24 @@ OsuExpertPlus.pages.userProfile = (() => {
           el(
             "span",
             { class: SECTION_PAGE_TITLE_COLLAPSED_SUFFIX_CLASS },
-            " (Collapsed)",
+            " (collapsed)",
           ),
         );
+      } else {
+        existing.textContent = " (collapsed)";
       }
     } else {
       existing?.remove();
     }
   }
 
+  /**
+   * Hide non-heading children so in-page section titles stay visible.
+   * Follows single-child wrappers briefly (some layouts nest one div).
+   * @param {HTMLElement} pageEl
+   * @param {number} depth
+   * @returns {boolean} true when headings were found and body nodes hidden
+   */
   function markProfileSectionBodyCollapsed(pageEl, depth) {
     if (depth > 4) return false;
     const kids = [...pageEl.children].filter((n) => n instanceof HTMLElement);
@@ -7784,6 +8167,13 @@ OsuExpertPlus.pages.userProfile = (() => {
   }
 
   function applyProfileSectionCollapseToPages(collapsed) {
+    const removeEntireSection = settings.isEnabled(
+      PROFILE_SECTION_COLLAPSE_REMOVE_FROM_PAGE_ID,
+    );
+    document.documentElement.classList.toggle(
+      SECTION_COLLAPSE_HARD_MODE_CLASS,
+      removeEntireSection,
+    );
     getSectionPageNodes().forEach((node) => {
       const id = node.getAttribute("data-page-id");
       if (!id) return;
@@ -7796,8 +8186,10 @@ OsuExpertPlus.pages.userProfile = (() => {
       }
 
       node.classList.add(SECTION_COLLAPSE_PAGE_CLASS);
-      if (!markProfileSectionBodyCollapsed(node, 0)) {
+      if (removeEntireSection) {
         node.classList.add(SECTION_COLLAPSE_BODY_HIDDEN_CLASS);
+      } else {
+        markProfileSectionBodyCollapsed(node, 0);
       }
       syncProfileSectionPageTitleCollapsedSuffix(node, true);
     });
@@ -7949,6 +8341,13 @@ OsuExpertPlus.pages.userProfile = (() => {
 
     let rebindTimer = 0;
     let obs = null;
+    const unsubRemoveMode = settings.onChange(
+      PROFILE_SECTION_COLLAPSE_REMOVE_FROM_PAGE_ID,
+      () => {
+        const collapsed = readProfileSectionsCollapsedSet();
+        applyProfileSectionCollapseToPages(collapsed);
+      },
+    );
 
     const bind = () => {
       clearTimeout(rebindTimer);
@@ -7985,6 +8384,7 @@ OsuExpertPlus.pages.userProfile = (() => {
     obs.observe(document.documentElement, { childList: true, subtree: true });
 
     return () => {
+      unsubRemoveMode();
       clearTimeout(rebindTimer);
       obs?.disconnect();
       document.removeEventListener("click", onContentsTabChevronClick, true);
@@ -7998,6 +8398,9 @@ OsuExpertPlus.pages.userProfile = (() => {
       document
         .querySelectorAll(`a.${SECTION_TAB_COLLAPSED_CLASS}`)
         .forEach((a) => a.classList.remove(SECTION_TAB_COLLAPSED_CLASS));
+      document.documentElement.classList.remove(
+        SECTION_COLLAPSE_HARD_MODE_CLASS,
+      );
       sectionCollapseStyle.remove();
     };
   }
@@ -8376,6 +8779,7 @@ OsuExpertPlus.pages.userProfile = (() => {
     cleanups.push(startProfileSectionCollapseManager());
     cleanups.push(startProfileSubsectionCollapseManager());
     cleanups.push(startBbcodeHelperManager());
+    cleanups.push(startProfileMediaOpenPictureManager());
     const profileUserId = getProfileUserId();
     const currentUserId = getCurrentUserIdFromHeader();
     if (
