@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         osu! Expert+
 // @namespace    https://github.com/inix1257/osu_expertplus
-// @version      0.2.18
+// @version      0.2.19
 // @description  Adds extra QoL features to osu.ppy.sh
 // @author       inix1257
 // @homepageURL  https://github.com/inix1257/osu_expertplus
@@ -196,7 +196,25 @@ OsuExpertPlus.dom = (() => {
     let s = String(str).trim();
     // Strip whitespace-like thousand separators (thin/non-breaking/regular space)
     s = s.replace(/[\s\u00A0\u202F\u2009]/g, "");
-    // Whichever of comma/period appears LAST is the decimal separator
+    const locale =
+      typeof window.currentLocale === "string"
+        ? window.currentLocale
+        : document.documentElement.lang || undefined;
+    let decimalSep = ".";
+    try {
+      decimalSep = new Intl.NumberFormat(locale)
+        .format(1.1)
+        .replace(/\d/g, "")
+        .trim();
+    } catch (_) {}
+    const dec = decimalSep.replace(/[\s\u00A0\u202F\u2009]/g, "");
+    if (dec === "." && /^\d{1,3}(,\d{3})+$/.test(s)) {
+      return parseFloat(s.replace(/,/g, ""));
+    }
+    if (dec === "," && /^\d{1,3}(\.\d{3})+$/.test(s)) {
+      return parseFloat(s.replace(/\./g, ""));
+    }
+
     const lastComma = s.lastIndexOf(",");
     const lastPeriod = s.lastIndexOf(".");
     if (lastComma > lastPeriod) {
@@ -1059,6 +1077,14 @@ OsuExpertPlus.settings = (() => {
       default: true,
     },
     {
+      id: "userProfile.profileSectionCollapseRemoveFromPage",
+      label: "Hide collapsed profile sections",
+      description:
+        "When enabled, collapsing a section via Contents hides the whole block until you expand it from Contents again. When disabled (default), the section heading stays on the page with “(collapsed)” and you can expand it by clicking the heading.",
+      group: "User Profile",
+      default: false,
+    },
+    {
       id: "userProfile.scorePpDecimals",
       label: "PP decimals on scores",
       description:
@@ -1298,6 +1324,8 @@ OsuExpertPlus.settings = (() => {
     SCORE_CARD_PLACE_NUMBER: "userProfile.scoreCardPlaceNumber",
     SCORE_PERIOD_HIGHLIGHT: "scores.periodHighlight",
     BWS_RANKING: "userProfile.bwsRanking",
+    PROFILE_SECTION_COLLAPSE_REMOVE_FROM_PAGE:
+      "userProfile.profileSectionCollapseRemoveFromPage",
     RECENT_SCORES_SHOW_FAILS: "userProfile.recentScoresShowFails",
     METADATA_DESCRIPTION_MODAL_BUTTONS:
       "beatmapDetail.metadataDescriptionModalButtons",
@@ -6263,311 +6291,6 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       overflow: hidden;
       text-overflow: ellipsis;
     }
-  `;
-
-  const MOD_GRID_ATTR = "data-oep-mod-grid";
-  const MOD_RESET_BTN_SYNC_ATTR = "data-oep-mod-reset-sync-obs";
-
-  const MOD_GRID_CSS = `
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] {
-      display: grid !important;
-      gap: 8px 12px;
-      align-items: start;
-      justify-items: stretch;
-      margin-bottom: 1.5rem;
-      text-align: start;
-    }
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] > .beatmap-scoreboard-mod[data-oep-mod-hidden] {
-      display: none !important;
-    }
-    /* osu-web: .beatmapset-scoreboard__mods--initial:hover sets --scoreboard-mod-opacity: 0.5; only a
-       hovered .beatmap-scoreboard-mod sets it back to 1. Expert+ adds labels/headers/gaps, so hovering
-       those counts as “strip hover” but not “mod hover” → every icon stays dimmed. Keep full opacity
-       unless the pointer is actually on a mod button. */
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}].beatmapset-scoreboard__mods--initial:hover:not(:has(.beatmap-scoreboard-mod:hover)) {
-      --scoreboard-mod-opacity: 1;
-    }
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] {
-      grid-template-columns: minmax(6.5rem, max-content) minmax(0, 1fr) minmax(0, 1fr);
-      grid-template-areas:
-        "mod-toggle mod-toggle mod-toggle"
-        "hdr-corner hdr-stable hdr-lazer"
-        "r0-label r0-stable r0-lazer"
-        "r1-label r1-stable r1-lazer"
-        "r2-label r2-stable r2-lazer";
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__toggle-row {
-      grid-area: mod-toggle;
-      display: flex;
-      align-items: center;
-      justify-content: flex-start;
-      justify-self: stretch;
-      width: 100%;
-      min-width: 0;
-      text-align: start;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__collapse-toggle {
-      position: relative;
-      display: block;
-      flex: 0 0 auto;
-      margin: 0;
-      margin-right: auto;
-      padding: 4px 0 4px 1.35rem;
-      border: none;
-      background: transparent;
-      cursor: pointer;
-      font: inherit;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: hsl(var(--hsl-c2, 333 60% 70%));
-      text-align: start !important;
-      width: fit-content;
-      max-width: 100%;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__collapse-label {
-      display: block;
-      text-align: start !important;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__collapse-toggle:hover {
-      color: hsl(var(--hsl-l1, 0 0% 92%));
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__collapse-toggle:focus-visible {
-      outline: 2px solid hsl(var(--hsl-c2, 333 60% 70%));
-      outline-offset: 2px;
-      border-radius: 4px;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__collapse-toggle i {
-      position: absolute;
-      left: 0;
-      top: 50%;
-      width: 1rem;
-      height: 1em;
-      display: flex;
-      align-items: center;
-      justify-content: flex-start;
-      font-size: 12px;
-      line-height: 1;
-      opacity: 0.9;
-      transform: translateY(-50%);
-      transform-origin: 0.35em 50%;
-      transition: transform 0.15s ease;
-    }
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}].${MOD_GRID_COLLAPSED_CLASS} {
-      text-align: start !important;
-      width: 100% !important;
-      max-width: 100%;
-      box-sizing: border-box;
-    }
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}].${MOD_GRID_COLLAPSED_CLASS}
-      > :not(.${MOD_GRID_CLASS}__toggle-row):not(.beatmap-scoreboard-mod) {
-      display: none !important;
-    }
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}].${MOD_GRID_COLLAPSED_CLASS}
-      .${MOD_GRID_CLASS}__collapse-toggle i {
-      transform: translateY(-50%) rotate(-90deg);
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__hdr-corner {
-      grid-area: hdr-corner;
-      min-height: 1px;
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__reset-mods {
-      flex: 0 0 auto;
-      margin: 0;
-      padding: 3px 8px;
-      border-radius: 4px;
-      border: 1px solid hsl(var(--hsl-b4, 333 18% 28%));
-      cursor: pointer;
-      font: inherit;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: hsl(var(--hsl-l1, 0 0% 88%));
-      background: hsl(var(--hsl-b5, 333 18% 22%));
-      line-height: 1.2;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__reset-mods:hover:not(:disabled) {
-      filter: brightness(1.1);
-      border-color: hsl(var(--hsl-c2, 333 60% 70%) / 0.45);
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__reset-mods:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__reset-mods:focus-visible {
-      outline: 2px solid hsl(var(--hsl-c2, 333 60% 70%));
-      outline-offset: 2px;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__hdr-stable {
-      grid-area: hdr-stable;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__hdr-lazer {
-      grid-area: hdr-lazer;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r0-label {
-      grid-area: r0-label;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r1-label {
-      grid-area: r1-label;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r2-label {
-      grid-area: r2-label;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r0-stable {
-      grid-area: r0-stable;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r0-lazer {
-      grid-area: r0-lazer;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r1-stable {
-      grid-area: r1-stable;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r1-lazer {
-      grid-area: r1-lazer;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r2-stable {
-      grid-area: r2-stable;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r2-lazer {
-      grid-area: r2-lazer;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__label {
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: hsl(var(--hsl-c2, 333 60% 70%));
-      opacity: 0.9;
-      padding-top: 0;
-      line-height: 1.25;
-      max-width: 11rem;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__colhead {
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: hsl(var(--hsl-l1, 0 0% 88%));
-      padding: 2px 0 4px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      min-width: 0;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__colhead--lazer {
-      justify-content: space-between;
-      flex-wrap: wrap;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__pile {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      align-items: center;
-      min-width: 0;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__wildcard-guide {
-      flex: 1 1 100%;
-      width: 100%;
-      max-width: 22rem;
-      box-sizing: border-box;
-      margin-top: 2px;
-      padding: 6px 8px;
-      border-radius: 6px;
-      border: 1px solid hsl(var(--hsl-b4, 333 18% 28%) / 0.55);
-      background: hsl(var(--hsl-b2, 333 18% 10%) / 0.9);
-      font-size: 9px;
-      line-height: 1.35;
-      color: hsl(var(--hsl-c2, 333 60% 72%));
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__wildcard-guide-row {
-      display: flex;
-      align-items: flex-start;
-      gap: 8px;
-      min-width: 0;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__wildcard-guide-icon {
-      position: relative;
-      flex: 0 0 auto;
-      width: 34px;
-      height: 34px;
-      margin-top: 1px;
-      border-radius: 8px;
-      box-sizing: border-box;
-      background: hsl(var(--hsl-b4, 333 18% 18%) / 0.6);
-      outline: 2px dashed hsl(45 100% 60% / 0.85);
-      outline-offset: 1px;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__wildcard-guide-icon::after {
-      content: "?";
-      position: absolute;
-      top: -5px;
-      right: -5px;
-      width: 15px;
-      height: 15px;
-      border-radius: 50%;
-      background: hsl(45 100% 50%);
-      color: hsl(0 0% 10%);
-      font-size: 10px;
-      font-weight: 800;
-      line-height: 15px;
-      text-align: center;
-      pointer-events: none;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__wildcard-guide-text {
-      margin: 0;
-      min-width: 0;
-    }
-    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__wildcard-guide-text strong {
-      color: hsl(var(--hsl-l1, 0 0% 90%));
-      font-weight: 700;
-    }
-    /* Mod statistics numbers (grid layout only): enabled mods -> white. */
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .beatmap-scoreboard-mod--enabled .mod__extender span,
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .beatmap-scoreboard-mod--enabled .mod__extender,
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .beatmap-scoreboard-mod--enabled .mod__customised-indicator span,
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .beatmap-scoreboard-mod--enabled .mod__customised-indicator,
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .beatmap-scoreboard-mod--enabled .beatmap-scoreboard-mod__stat,
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .beatmap-scoreboard-mod--enabled .beatmap-scoreboard-mod__count {
-      color: hsl(var(--hsl-l1, 0 0% 90%)) !important;
-    }
-    /* Wildcard mod styling */
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .${MOD_WILDCARD_CLASS} {
-      position: relative;
-      --scoreboard-mod-opacity: 0.85;
-      filter: none;
-    }
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .${MOD_WILDCARD_CLASS} .mod__icon {
-      outline: 2px dashed hsl(45 100% 60% / 0.85);
-      outline-offset: 1px;
-      border-radius: 8px;
-    }
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .${MOD_WILDCARD_CLASS}::after {
-      content: "?";
-      position: absolute;
-      top: -4px;
-      right: -4px;
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      background: hsl(45 100% 50%);
-      color: hsl(0 0% 10%);
-      font-size: 11px;
-      font-weight: 800;
-      line-height: 16px;
-      text-align: center;
-      pointer-events: none;
-      z-index: 2;
-    }
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .${MOD_WILDCARD_CLASS} .beatmap-scoreboard-mod__stat,
-    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .${MOD_WILDCARD_CLASS} .beatmap-scoreboard-mod__count {
-      color: hsl(45 100% 70%) !important;
-    }
     /* Wildcard loading overlay on the scoreboard table */
     .${WILDCARD_LOADING_CLASS} {
       position: relative;
@@ -6680,9 +6403,14 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       padding: 4px 2px 8px;
     }
 
-    .beatmapset-header__beatmap-picker-box:has(.oep-picker-hover-hint)
+    .beatmapset-header.oep-picker-hover-hint-enabled
+      .beatmapset-header__beatmap-picker-box:has(.oep-picker-hover-hint)
       > .beatmapset-beatmap-picker {
       padding-left: 0;
+    }
+    /* Shown only when "Difficulty name & stars in the active picker cell" is on. */
+    .beatmapset-header:not(.oep-picker-hover-hint-enabled) .oep-picker-hover-hint {
+      display: none !important;
     }
     .oep-picker-hover-hint {
       display: flex;
@@ -7588,15 +7316,322 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
     }
   `;
 
+  const MOD_GRID_ATTR = "data-oep-mod-grid";
+  const MOD_RESET_BTN_SYNC_ATTR = "data-oep-mod-reset-sync-obs";
+
+  const MOD_GRID_CSS = `
+
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] {
+      display: grid !important;
+      gap: 8px 12px;
+      align-items: start;
+      justify-items: stretch;
+      margin-bottom: 1.5rem;
+      text-align: start;
+    }
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] > .beatmap-scoreboard-mod[data-oep-mod-hidden] {
+      display: none !important;
+    }
+    /* osu-web: .beatmapset-scoreboard__mods--initial:hover sets --scoreboard-mod-opacity: 0.5; only a
+       hovered .beatmap-scoreboard-mod sets it back to 1. Expert+ adds labels/headers/gaps, so hovering
+       those counts as “strip hover” but not “mod hover” → every icon stays dimmed. Keep full opacity
+       unless the pointer is actually on a mod button. */
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}].beatmapset-scoreboard__mods--initial:hover:not(:has(.beatmap-scoreboard-mod:hover)) {
+      --scoreboard-mod-opacity: 1;
+    }
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] {
+      grid-template-columns: minmax(6.5rem, max-content) minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-areas:
+        "mod-toggle mod-toggle mod-toggle"
+        "hdr-corner hdr-stable hdr-lazer"
+        "r0-label r0-stable r0-lazer"
+        "r1-label r1-stable r1-lazer"
+        "r2-label r2-stable r2-lazer";
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__toggle-row {
+      grid-area: mod-toggle;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      justify-self: stretch;
+      width: 100%;
+      min-width: 0;
+      text-align: start;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__collapse-toggle {
+      position: relative;
+      display: block;
+      flex: 0 0 auto;
+      margin: 0;
+      margin-right: auto;
+      padding: 4px 0 4px 1.35rem;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: hsl(var(--hsl-c2, 333 60% 70%));
+      text-align: start !important;
+      width: fit-content;
+      max-width: 100%;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__collapse-label {
+      display: block;
+      text-align: start !important;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__collapse-toggle:hover {
+      color: hsl(var(--hsl-l1, 0 0% 92%));
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__collapse-toggle:focus-visible {
+      outline: 2px solid hsl(var(--hsl-c2, 333 60% 70%));
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__collapse-toggle i {
+      position: absolute;
+      left: 0;
+      top: 50%;
+      width: 1rem;
+      height: 1em;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      font-size: 12px;
+      line-height: 1;
+      opacity: 0.9;
+      transform: translateY(-50%);
+      transform-origin: 0.35em 50%;
+      transition: transform 0.15s ease;
+    }
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}].${MOD_GRID_COLLAPSED_CLASS} {
+      text-align: start !important;
+      width: 100% !important;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}].${MOD_GRID_COLLAPSED_CLASS}
+      > :not(.${MOD_GRID_CLASS}__toggle-row):not(.beatmap-scoreboard-mod) {
+      display: none !important;
+    }
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}].${MOD_GRID_COLLAPSED_CLASS}
+      .${MOD_GRID_CLASS}__collapse-toggle i {
+      transform: translateY(-50%) rotate(-90deg);
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__hdr-corner {
+      grid-area: hdr-corner;
+      min-height: 1px;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__reset-mods {
+      flex: 0 0 auto;
+      margin: 0;
+      padding: 3px 8px;
+      border-radius: 4px;
+      border: 1px solid hsl(var(--hsl-b4, 333 18% 28%));
+      cursor: pointer;
+      font: inherit;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: hsl(var(--hsl-l1, 0 0% 88%));
+      background: hsl(var(--hsl-b5, 333 18% 22%));
+      line-height: 1.2;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__reset-mods:hover:not(:disabled) {
+      filter: brightness(1.1);
+      border-color: hsl(var(--hsl-c2, 333 60% 70%) / 0.45);
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__reset-mods:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__reset-mods:focus-visible {
+      outline: 2px solid hsl(var(--hsl-c2, 333 60% 70%));
+      outline-offset: 2px;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__hdr-stable {
+      grid-area: hdr-stable;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__hdr-lazer {
+      grid-area: hdr-lazer;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r0-label {
+      grid-area: r0-label;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r1-label {
+      grid-area: r1-label;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r2-label {
+      grid-area: r2-label;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r0-stable {
+      grid-area: r0-stable;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r0-lazer {
+      grid-area: r0-lazer;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r1-stable {
+      grid-area: r1-stable;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r1-lazer {
+      grid-area: r1-lazer;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r2-stable {
+      grid-area: r2-stable;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__r2-lazer {
+      grid-area: r2-lazer;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__label {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: hsl(var(--hsl-c2, 333 60% 70%));
+      opacity: 0.9;
+      padding-top: 0;
+      line-height: 1.25;
+      max-width: 11rem;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__colhead {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: hsl(var(--hsl-l1, 0 0% 88%));
+      padding: 2px 0 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__colhead--lazer {
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__pile {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__wildcard-guide {
+      flex: 1 1 100%;
+      width: 100%;
+      max-width: 22rem;
+      box-sizing: border-box;
+      margin-top: 2px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      border: 1px solid hsl(var(--hsl-b4, 333 18% 28%) / 0.55);
+      background: hsl(var(--hsl-b2, 333 18% 10%) / 0.9);
+      font-size: 9px;
+      line-height: 1.35;
+      color: hsl(var(--hsl-c2, 333 60% 72%));
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__wildcard-guide-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      min-width: 0;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__wildcard-guide-icon {
+      position: relative;
+      flex: 0 0 auto;
+      width: 34px;
+      height: 34px;
+      margin-top: 1px;
+      border-radius: 8px;
+      box-sizing: border-box;
+      background: hsl(var(--hsl-b4, 333 18% 18%) / 0.6);
+      outline: 2px dashed hsl(45 100% 60% / 0.85);
+      outline-offset: 1px;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__wildcard-guide-icon::after {
+      content: "?";
+      position: absolute;
+      top: -5px;
+      right: -5px;
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      background: hsl(45 100% 50%);
+      color: hsl(0 0% 10%);
+      font-size: 10px;
+      font-weight: 800;
+      line-height: 15px;
+      text-align: center;
+      pointer-events: none;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__wildcard-guide-text {
+      margin: 0;
+      min-width: 0;
+    }
+    [${MOD_GRID_ATTR}] .${MOD_GRID_CLASS}__wildcard-guide-text strong {
+      color: hsl(var(--hsl-l1, 0 0% 90%));
+      font-weight: 700;
+    }
+    /* Mod statistics numbers (grid layout only): enabled mods -> white. */
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .beatmap-scoreboard-mod--enabled .mod__extender span,
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .beatmap-scoreboard-mod--enabled .mod__extender,
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .beatmap-scoreboard-mod--enabled .mod__customised-indicator span,
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .beatmap-scoreboard-mod--enabled .mod__customised-indicator,
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .beatmap-scoreboard-mod--enabled .beatmap-scoreboard-mod__stat,
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .beatmap-scoreboard-mod--enabled .beatmap-scoreboard-mod__count {
+      color: hsl(var(--hsl-l1, 0 0% 90%)) !important;
+    }
+    /* Wildcard mod styling */
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .${MOD_WILDCARD_CLASS} {
+      position: relative;
+      --scoreboard-mod-opacity: 0.85;
+      filter: none;
+    }
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .${MOD_WILDCARD_CLASS} .mod__icon {
+      outline: 2px dashed hsl(45 100% 60% / 0.85);
+      outline-offset: 1px;
+      border-radius: 8px;
+    }
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .${MOD_WILDCARD_CLASS}::after {
+      content: "?";
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: hsl(45 100% 50%);
+      color: hsl(0 0% 10%);
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 16px;
+      text-align: center;
+      pointer-events: none;
+      z-index: 2;
+    }
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .${MOD_WILDCARD_CLASS} .beatmap-scoreboard-mod__stat,
+    .beatmapset-scoreboard__mods[${MOD_GRID_ATTR}] .${MOD_WILDCARD_CLASS} .beatmap-scoreboard-mod__count {
+      color: hsl(45 100% 70%) !important;
+    }
+  `;
+
   const mainStyle = manageStyle(STYLE_ID, CSS);
   const modGridStyle = manageStyle(MOD_GRID_STYLE_ID, MOD_GRID_CSS);
 
-  function ensureStyles() {
-    mainStyle.inject();
-  }
-
   function ensureModGridStyles() {
     modGridStyle.inject();
+  }
+
+  function ensureStyles() {
+    mainStyle.inject();
+    ensureModGridStyles();
   }
 
   /**
@@ -15854,8 +15889,9 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
   }
 
   /**
-   * Always-visible diff name + nomod SR below the picker tray (between picker and OMDB).
-   * Follows the active difficulty; while the cursor is over another icon, previews that diff.
+   * Diff name + nomod SR below the picker tray when “Difficulty name & stars in the active
+   * picker cell” is enabled. Follows the active difficulty; while the cursor is over another
+   * icon, previews that diff.
    * @param {HTMLElement} header
    * @param {RegExp} pathRe
    * @returns {() => void}
@@ -15863,6 +15899,18 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
   function startPickerHoverHint(header, pathRe) {
     const picker = header.querySelector(".beatmapset-beatmap-picker");
     if (!(picker instanceof HTMLElement)) return () => {};
+
+    function syncPickerHoverHintVisibility() {
+      header.classList.toggle(
+        "oep-picker-hover-hint-enabled",
+        settings.isEnabled(DIFF_NAME_BESIDE_PICKER_ID),
+      );
+    }
+    syncPickerHoverHintVisibility();
+    const unsubPickerHintSetting = settings.onChange(
+      DIFF_NAME_BESIDE_PICKER_ID,
+      syncPickerHoverHintVisibility,
+    );
 
     const versionEl = el("span", { class: "oep-picker-hover-hint__version" });
     const starEl = el(
@@ -16015,6 +16063,8 @@ OsuExpertPlus.pages.beatmapDetail = (() => {
       disposed = true;
       if (raf) window.cancelAnimationFrame(raf);
       raf = 0;
+      unsubPickerHintSetting();
+      header.classList.remove("oep-picker-hover-hint-enabled");
       picker.removeEventListener("mouseover", onPickerMouseOver);
       picker.removeEventListener("mouseleave", onPickerMouseLeave);
       window.removeEventListener("hashchange", onRouteSignal);
@@ -17376,6 +17426,8 @@ OsuExpertPlus.pages.userProfile = (() => {
   const SCORE_HIT_STATISTICS_ID = IDS.SCORE_HIT_STATISTICS;
   const SCORE_PERIOD_HIGHLIGHT_ID = IDS.SCORE_PERIOD_HIGHLIGHT;
   const RECENT_SCORES_SHOW_FAILS_ID = IDS.RECENT_SCORES_SHOW_FAILS;
+  const PROFILE_SECTION_COLLAPSE_REMOVE_FROM_PAGE_ID =
+    IDS.PROFILE_SECTION_COLLAPSE_REMOVE_FROM_PAGE;
   const PP_DECIMALS_ATTR = "data-oep-pp-original";
 
   function applyPpDecimals(listEl) {
@@ -18941,7 +18993,7 @@ OsuExpertPlus.pages.userProfile = (() => {
       }
     }
 
-    scoreSections.forEach((section) => {
+    function mountScoreListObserver(section) {
       const { listEl, type } = section;
       let sectionObsBusy = false;
 
@@ -19056,7 +19108,75 @@ OsuExpertPlus.pages.userProfile = (() => {
         attributeFilter: ["class"],
       });
       cleanupFns.push(() => classObs.disconnect());
+    }
+
+    scoreSections.forEach(mountScoreListObserver);
+
+    /**
+     * Apply all score features to a .play-detail-list that appeared after the
+     * initial `initScoreFeatures` snapshot (e.g. Historical tab opened for the
+     * first time, or a score section that was lazy-rendered by osu! later).
+     * @param {HTMLElement} listEl
+     */
+    async function adoptLateSection(listEl) {
+      const type = _getSectionType(listEl);
+      if (!SCORE_SECTION_TYPES.includes(type)) return;
+      listEl.setAttribute(PLAY_DETAIL_LIST_PROCESSED_ATTR, "1");
+
+      const section = { listEl, type };
+      scoreSections.push(section);
+
+      if (settings.isEnabled(SCORE_HIT_STATISTICS_ID)) {
+        setScoreListLayoutClass([section], true);
+      }
+      syncScoreListPpDecimalsWidthClass(listEl);
+      if (settings.isEnabled(SCORE_PP_DECIMALS_ID)) applyPpDecimals(listEl);
+      applyHideWeightedPp(listEl);
+      if (
+        settings.isEnabled(SCORE_PLACE_NUMBER_ID) &&
+        type === SCORE_PLACE_SECTION_TYPE
+      ) {
+        applyPlaceNumbers(listEl);
+        if (scoreSections.some((s) => s.type === SCORE_PLACE_SECTION_TYPE)) {
+          scorePlaceNumberStyle.inject();
+        }
+      }
+
+      if (type === "most_watched") {
+        mostWatchedSections.push(section);
+        if (!scoresMap.has("most_watched")) {
+          scoresMap.set(
+            "most_watched",
+            await fetchMostWatchedScores(userId, mode),
+          );
+        }
+        applyMostWatchedPp(listEl, scoresMap.get("most_watched"));
+        if (settings.isEnabled(SCORE_PP_DECIMALS_ID)) applyPpDecimals(listEl);
+      }
+
+      if (settings.isEnabled(SCORE_HIT_STATISTICS_ID)) {
+        await _loadAndApplyStats(section);
+        if (settings.isEnabled(SCORE_PP_DECIMALS_ID)) applyPpDecimals(listEl);
+      }
+
+      mountScoreListObserver(section);
+    }
+
+    const lateSectionObs = new MutationObserver(() => {
+      document
+        .querySelectorAll(
+          `.play-detail-list:not([${PLAY_DETAIL_LIST_PROCESSED_ATTR}])`,
+        )
+        .forEach((listEl) => {
+          if (!(listEl instanceof HTMLElement)) return;
+          adoptLateSection(listEl);
+        });
     });
+    lateSectionObs.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+    cleanupFns.push(() => lateSectionObs.disconnect());
 
     cleanupFns.push(
       settings.onChange(SCORE_PP_DECIMALS_ID, (enabled) => {
@@ -19161,6 +19281,343 @@ OsuExpertPlus.pages.userProfile = (() => {
     if (!m) return null;
     const n = Number(m[1]);
     return Number.isFinite(n) ? String(n) : null;
+  }
+
+  const PROFILE_AVATAR_OPEN_ATTR = "data-oep-profile-avatar-open";
+  const PROFILE_BANNER_OPEN_ATTR = "data-oep-profile-banner-open";
+  const PROFILE_MEDIA_OPEN_BTN_CLASS = "oep-profile-media-open";
+  const PROFILE_MEDIA_OPEN_AVATAR_CLASS = "oep-profile-media-open--avatar";
+  const PROFILE_MEDIA_OPEN_BANNER_CLASS = "oep-profile-media-open--banner";
+  const PROFILE_MEDIA_OPEN_HOST_CLASS = "oep-profile-media-open-host";
+  const PROFILE_MEDIA_OPEN_STYLE_ID = "osu-expertplus-profile-media-open";
+
+  const profileMediaOpenStyle = manageStyle(
+    PROFILE_MEDIA_OPEN_STYLE_ID,
+    `
+    .profile-info.${PROFILE_MEDIA_OPEN_HOST_CLASS},
+    .${PROFILE_MEDIA_OPEN_HOST_CLASS} {
+      position: relative;
+    }
+    .${PROFILE_MEDIA_OPEN_BTN_CLASS} {
+      position: absolute;
+      z-index: 7;
+      margin: 0;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.85em;
+      height: 1.85em;
+      min-width: 1.85em;
+      min-height: 1.85em;
+      font-size: 11px;
+      line-height: 1;
+      color: hsl(var(--hsl-l1));
+      cursor: pointer;
+      appearance: none;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 5px;
+      background: rgba(0, 0, 0, 0.55);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 140ms ease, background-color 140ms ease,
+        border-color 140ms ease;
+    }
+    .${PROFILE_MEDIA_OPEN_BTN_CLASS} .fas {
+      pointer-events: none;
+    }
+    .${PROFILE_MEDIA_OPEN_HOST_CLASS}:has(.profile-info__avatar:hover)
+      .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_AVATAR_CLASS},
+    .${PROFILE_MEDIA_OPEN_HOST_CLASS}:has(
+        .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_AVATAR_CLASS}:hover
+      )
+      .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_AVATAR_CLASS},
+    .${PROFILE_MEDIA_OPEN_HOST_CLASS}:has(
+        .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_AVATAR_CLASS}:focus-visible
+      )
+      .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_AVATAR_CLASS} {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .${PROFILE_MEDIA_OPEN_HOST_CLASS}:has(.profile-info__bg:hover)
+      .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_BANNER_CLASS},
+    .${PROFILE_MEDIA_OPEN_HOST_CLASS}:has(
+        .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_BANNER_CLASS}:hover
+      )
+      .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_BANNER_CLASS},
+    .${PROFILE_MEDIA_OPEN_HOST_CLASS}:has(
+        .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_BANNER_CLASS}:focus-visible
+      )
+      .${PROFILE_MEDIA_OPEN_BTN_CLASS}.${PROFILE_MEDIA_OPEN_BANNER_CLASS} {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .${PROFILE_MEDIA_OPEN_BTN_CLASS}:hover {
+      background: rgba(0, 0, 0, 0.78);
+      border-color: rgba(255, 255, 255, 0.22);
+    }
+    .${PROFILE_MEDIA_OPEN_BTN_CLASS}:focus-visible {
+      outline: 2px solid hsl(var(--hsl-b1));
+      outline-offset: 2px;
+    }
+    .${PROFILE_MEDIA_OPEN_BTN_CLASS}[data-oep-media-tip]::after {
+      content: attr(data-oep-media-tip);
+      position: absolute;
+      right: 0;
+      bottom: calc(100% + 6px);
+      padding: 0.32em 0.48em;
+      max-width: min(14rem, 70vw);
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.25;
+      text-align: center;
+      white-space: normal;
+      color: hsl(var(--hsl-l1));
+      background: rgba(0, 0, 0, 0.9);
+      border-radius: 5px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 120ms ease;
+      z-index: 8;
+    }
+    .${PROFILE_MEDIA_OPEN_BTN_CLASS}[data-oep-media-tip]:hover::after,
+    .${PROFILE_MEDIA_OPEN_BTN_CLASS}[data-oep-media-tip]:focus-visible::after {
+      opacity: 1;
+    }
+  `,
+  );
+
+  /** @type {WeakMap<HTMLElement, number>} */
+  const profileMediaOpenHostCounts = new WeakMap();
+
+  function acquireProfileMediaOpenHost(profileInfo) {
+    const n = (profileMediaOpenHostCounts.get(profileInfo) || 0) + 1;
+    profileMediaOpenHostCounts.set(profileInfo, n);
+    profileInfo.classList.add(PROFILE_MEDIA_OPEN_HOST_CLASS);
+  }
+
+  function releaseProfileMediaOpenHost(profileInfo) {
+    const prev = profileMediaOpenHostCounts.get(profileInfo);
+    if (prev == null) return;
+    const n = prev - 1;
+    if (n <= 0) {
+      profileMediaOpenHostCounts.delete(profileInfo);
+      profileInfo.classList.remove(PROFILE_MEDIA_OPEN_HOST_CLASS);
+    } else {
+      profileMediaOpenHostCounts.set(profileInfo, n);
+    }
+  }
+
+  /**
+   * @param {HTMLElement} avatarHost
+   * @returns {string}
+   */
+  function resolveProfileAvatarImageHref(avatarHost) {
+    const data = parseProfileInitialData();
+    const fromData = data?.user?.avatar_url;
+    if (typeof fromData === "string" && fromData.trim()) return fromData.trim();
+    const img = avatarHost.querySelector("img[src]");
+    if (img instanceof HTMLImageElement && img.src) return img.src;
+    const withBg = avatarHost.querySelector("[style*='background-image']");
+    if (withBg instanceof HTMLElement) {
+      const styleAttr = withBg.getAttribute("style") || "";
+      const m = styleAttr.match(/url\(\s*["']?([^"')]+)/i);
+      if (m && m[1]) return m[1].trim();
+    }
+    const uid = getProfileUserId();
+    return uid ? `https://a.ppy.sh/${uid}` : "";
+  }
+
+  /**
+   * @param {HTMLElement} bgHost
+   * @returns {string}
+   */
+  function resolveProfileBannerImageHref(bgHost) {
+    const data = parseProfileInitialData();
+    const cover = data?.user?.cover;
+    if (cover && typeof cover === "object") {
+      for (const k of ["custom_url", "url"]) {
+        const u = cover[k];
+        if (typeof u === "string" && u.trim()) return u.trim();
+      }
+    }
+    const flat = data?.user?.cover_url;
+    if (typeof flat === "string" && flat.trim()) return flat.trim();
+
+    const styleAttr = bgHost.getAttribute("style") || "";
+    let m = styleAttr.match(/url\(\s*["']?([^"')]+)/i);
+    if (m && m[1]) return m[1].trim();
+    for (const inner of bgHost.querySelectorAll("[style*='background-image']")) {
+      if (!(inner instanceof HTMLElement)) continue;
+      const s = inner.getAttribute("style") || "";
+      m = s.match(/url\(\s*["']?([^"')]+)/i);
+      if (m && m[1]) return m[1].trim();
+    }
+    const img = bgHost.querySelector("img[src]");
+    if (img instanceof HTMLImageElement && img.src) return img.src;
+    return "";
+  }
+
+  /**
+   * @param {{
+   *   mediaHost: HTMLElement,
+   *   markerAttr: string,
+   *   resolveHref: (host: HTMLElement) => string,
+   *   ariaLabel: string,
+   *   tip: string,
+   * }} opts
+   * @returns {null | (() => void)}
+   */
+  function bindProfileMediaOpenButton(opts) {
+    const { mediaHost, markerAttr, resolveHref, ariaLabel, tip } = opts;
+    if (!(mediaHost instanceof HTMLElement)) return null;
+    if (mediaHost.hasAttribute(markerAttr)) return null;
+    const href = resolveHref(mediaHost);
+    if (!href) return null;
+    mediaHost.setAttribute(markerAttr, "1");
+
+    const profileInfoEl = mediaHost.closest(".profile-info");
+    const profileInfo =
+      profileInfoEl instanceof HTMLElement
+        ? profileInfoEl
+        : mediaHost.parentElement;
+    if (!(profileInfo instanceof HTMLElement)) {
+      mediaHost.removeAttribute(markerAttr);
+      return null;
+    }
+
+    acquireProfileMediaOpenHost(profileInfo);
+
+    const variantClass =
+      markerAttr === PROFILE_AVATAR_OPEN_ATTR
+        ? PROFILE_MEDIA_OPEN_AVATAR_CLASS
+        : PROFILE_MEDIA_OPEN_BANNER_CLASS;
+
+    const btn = el(
+      "button",
+      {
+        type: "button",
+        class: `${PROFILE_MEDIA_OPEN_BTN_CLASS} ${variantClass}`,
+        "data-oep-media-tip": tip,
+        "aria-label": ariaLabel,
+        onclick: (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          window.open(href, "_blank", "noopener,noreferrer");
+        },
+      },
+      el("i", {
+        class: "fas fa-external-link-alt",
+        "aria-hidden": "true",
+      }),
+    );
+
+    function syncOpenBtnLayout() {
+      if (!btn.isConnected || !mediaHost.isConnected) return;
+      const ar = mediaHost.getBoundingClientRect();
+      const pr = profileInfo.getBoundingClientRect();
+      const top = ar.top - pr.top + profileInfo.scrollTop;
+      const left = ar.left - pr.left + profileInfo.scrollLeft;
+      btn.style.top = `${Math.round(top + 2)}px`;
+      btn.style.left = `${Math.round(left + ar.width - 2)}px`;
+      btn.style.transform = "translate(-100%, 0)";
+    }
+
+    profileInfo.appendChild(btn);
+    syncOpenBtnLayout();
+
+    const ro =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(syncOpenBtnLayout)
+        : null;
+    ro?.observe(mediaHost);
+    ro?.observe(profileInfo);
+    window.addEventListener("scroll", syncOpenBtnLayout, true);
+    window.addEventListener("resize", syncOpenBtnLayout);
+
+    return () => {
+      window.removeEventListener("scroll", syncOpenBtnLayout, true);
+      window.removeEventListener("resize", syncOpenBtnLayout);
+      ro?.disconnect();
+      btn.remove();
+      releaseProfileMediaOpenHost(profileInfo);
+      mediaHost.removeAttribute(markerAttr);
+    };
+  }
+
+  /** Hover controls on profile avatar and banner to open full media in a new tab. */
+  function startProfileMediaOpenPictureManager() {
+    profileMediaOpenStyle.inject();
+
+    let disposeAvatar = /** @type {null | (() => void)} */ (null);
+    let disposeBanner = /** @type {null | (() => void)} */ (null);
+    const ac = new AbortController();
+
+    function scanProfileMediaOpen() {
+      if (ac.signal.aborted) return;
+      const av = document.querySelector(".profile-info__avatar");
+      if (
+        av instanceof HTMLElement &&
+        !av.hasAttribute(PROFILE_AVATAR_OPEN_ATTR)
+      ) {
+        disposeAvatar?.();
+        disposeAvatar =
+          bindProfileMediaOpenButton({
+            mediaHost: av,
+            markerAttr: PROFILE_AVATAR_OPEN_ATTR,
+            resolveHref: resolveProfileAvatarImageHref,
+            ariaLabel: "Open profile picture",
+            tip: "Open profile picture",
+          }) || null;
+      }
+      const bg = document.querySelector(".profile-info__bg");
+      if (bg instanceof HTMLElement && !bg.hasAttribute(PROFILE_BANNER_OPEN_ATTR)) {
+        disposeBanner?.();
+        disposeBanner =
+          bindProfileMediaOpenButton({
+            mediaHost: bg,
+            markerAttr: PROFILE_BANNER_OPEN_ATTR,
+            resolveHref: resolveProfileBannerImageHref,
+            ariaLabel: "Open profile banner",
+            tip: "Open profile banner",
+          }) || null;
+      }
+    }
+
+    Promise.allSettled([
+      waitForElement(".profile-info__avatar", 15000),
+      waitForElement(".profile-info__bg", 15000),
+    ]).then(() => {
+      if (!ac.signal.aborted) scanProfileMediaOpen();
+    });
+
+    const obs = new MutationObserver(scanProfileMediaOpen);
+    obs.observe(document.documentElement, { childList: true, subtree: true });
+
+    return () => {
+      ac.abort();
+      obs.disconnect();
+      disposeAvatar?.();
+      disposeBanner?.();
+      document
+        .querySelectorAll(`.${PROFILE_MEDIA_OPEN_BTN_CLASS}`)
+        .forEach((b) => b.remove());
+      document
+        .querySelectorAll(`[${PROFILE_AVATAR_OPEN_ATTR}]`)
+        .forEach((el) => el.removeAttribute(PROFILE_AVATAR_OPEN_ATTR));
+      document
+        .querySelectorAll(`[${PROFILE_BANNER_OPEN_ATTR}]`)
+        .forEach((el) => el.removeAttribute(PROFILE_BANNER_OPEN_ATTR));
+      document
+        .querySelectorAll(`.${PROFILE_MEDIA_OPEN_HOST_CLASS}`)
+        .forEach((el) =>
+          el.classList.remove(PROFILE_MEDIA_OPEN_HOST_CLASS),
+        );
+      profileMediaOpenStyle.remove();
+    };
   }
 
   const RECENT_FAILS_WRAP_CLASS = "oep-recent-scores-with-fails";
@@ -24861,16 +25318,14 @@ OsuExpertPlus.pages.userProfile = (() => {
   const SECTION_PAGE_TITLE_COLLAPSED_SUFFIX_CLASS =
     "oep-profile-section-page-title__collapsed-suffix";
   const SECTION_COLLAPSE_STYLE_ID = "osu-expertplus-profile-section-collapse";
+  const SECTION_COLLAPSE_HARD_MODE_CLASS = "oep-profile-section-collapse--hard";
 
   const SECTION_COLLAPSE_CSS = `
     .${SECTION_COLLAPSE_BODY_HIDDEN_CLASS} {
       display: none !important;
     }
-    div.js-sortable--page.${SECTION_COLLAPSE_PAGE_CLASS}
-      > *:not(h2.title.title--page-extra):not(h3.title.title--page-extra-small):not(div.u-relative:has(> h2.title.title--page-extra)) {
-      display: none !important;
-    }
-    div.js-sortable--page.${SECTION_COLLAPSE_PAGE_CLASS}
+    html.${SECTION_COLLAPSE_HARD_MODE_CLASS}
+      div.js-sortable--page.${SECTION_COLLAPSE_PAGE_CLASS}
       > div.u-relative
       > *:not(h2.title.title--page-extra):not(h3.title.title--page-extra-small) {
       display: none !important;
@@ -25057,14 +25512,7 @@ OsuExpertPlus.pages.userProfile = (() => {
   }
 
   /**
-   * Hide non-heading children so in-page section titles stay visible.
-   * Follows single-child wrappers briefly (some layouts nest one div).
-   * @param {HTMLElement} pageEl
-   * @param {number} depth
-   * @returns {boolean} true when headings were found and body nodes hidden
-   */
-  /**
-   * "(Collapsed)" is a real node so `h2::after` stays the hover overlay (same as expanded).
+   * "(collapsed)" is a real node so `h2::after` stays the hover overlay (same as expanded).
    * @param {HTMLElement} pageEl
    * @param {boolean} isCollapsed
    */
@@ -25081,15 +25529,24 @@ OsuExpertPlus.pages.userProfile = (() => {
           el(
             "span",
             { class: SECTION_PAGE_TITLE_COLLAPSED_SUFFIX_CLASS },
-            " (Collapsed)",
+            " (collapsed)",
           ),
         );
+      } else {
+        existing.textContent = " (collapsed)";
       }
     } else {
       existing?.remove();
     }
   }
 
+  /**
+   * Hide non-heading children so in-page section titles stay visible.
+   * Follows single-child wrappers briefly (some layouts nest one div).
+   * @param {HTMLElement} pageEl
+   * @param {number} depth
+   * @returns {boolean} true when headings were found and body nodes hidden
+   */
   function markProfileSectionBodyCollapsed(pageEl, depth) {
     if (depth > 4) return false;
     const kids = [...pageEl.children].filter((n) => n instanceof HTMLElement);
@@ -25112,6 +25569,13 @@ OsuExpertPlus.pages.userProfile = (() => {
   }
 
   function applyProfileSectionCollapseToPages(collapsed) {
+    const removeEntireSection = settings.isEnabled(
+      PROFILE_SECTION_COLLAPSE_REMOVE_FROM_PAGE_ID,
+    );
+    document.documentElement.classList.toggle(
+      SECTION_COLLAPSE_HARD_MODE_CLASS,
+      removeEntireSection,
+    );
     getSectionPageNodes().forEach((node) => {
       const id = node.getAttribute("data-page-id");
       if (!id) return;
@@ -25124,8 +25588,10 @@ OsuExpertPlus.pages.userProfile = (() => {
       }
 
       node.classList.add(SECTION_COLLAPSE_PAGE_CLASS);
-      if (!markProfileSectionBodyCollapsed(node, 0)) {
+      if (removeEntireSection) {
         node.classList.add(SECTION_COLLAPSE_BODY_HIDDEN_CLASS);
+      } else {
+        markProfileSectionBodyCollapsed(node, 0);
       }
       syncProfileSectionPageTitleCollapsedSuffix(node, true);
     });
@@ -25277,6 +25743,13 @@ OsuExpertPlus.pages.userProfile = (() => {
 
     let rebindTimer = 0;
     let obs = null;
+    const unsubRemoveMode = settings.onChange(
+      PROFILE_SECTION_COLLAPSE_REMOVE_FROM_PAGE_ID,
+      () => {
+        const collapsed = readProfileSectionsCollapsedSet();
+        applyProfileSectionCollapseToPages(collapsed);
+      },
+    );
 
     const bind = () => {
       clearTimeout(rebindTimer);
@@ -25313,6 +25786,7 @@ OsuExpertPlus.pages.userProfile = (() => {
     obs.observe(document.documentElement, { childList: true, subtree: true });
 
     return () => {
+      unsubRemoveMode();
       clearTimeout(rebindTimer);
       obs?.disconnect();
       document.removeEventListener("click", onContentsTabChevronClick, true);
@@ -25326,6 +25800,7 @@ OsuExpertPlus.pages.userProfile = (() => {
       document
         .querySelectorAll(`a.${SECTION_TAB_COLLAPSED_CLASS}`)
         .forEach((a) => a.classList.remove(SECTION_TAB_COLLAPSED_CLASS));
+      document.documentElement.classList.remove(SECTION_COLLAPSE_HARD_MODE_CLASS);
       sectionCollapseStyle.remove();
     };
   }
@@ -25704,6 +26179,7 @@ OsuExpertPlus.pages.userProfile = (() => {
     cleanups.push(startProfileSectionCollapseManager());
     cleanups.push(startProfileSubsectionCollapseManager());
     cleanups.push(startBbcodeHelperManager());
+    cleanups.push(startProfileMediaOpenPictureManager());
     const profileUserId = getProfileUserId();
     const currentUserId = getCurrentUserIdFromHeader();
     if (
